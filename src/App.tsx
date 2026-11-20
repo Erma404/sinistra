@@ -21,6 +21,7 @@ export default function App() {
   const [analyses, setAnalyses] = useState<Record<string, EtatAnalyse>>({});
   const [vue, setVue] = useState<Vue>({ ecran: "accueil" });
   const [guide, setGuide] = useState(false);
+  const [dernierDossier, setDernierDossier] = useState<string | null>(null);
   const [valides, setValides] = useState(() => journal.valides());
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export default function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0 });
+    if (vue.ecran === "dossier") setDernierDossier(vue.id);
   }, [vue]);
 
   const declaration = vue.ecran === "dossier" ? DECLARATIONS.find((d) => d.id === vue.id) : undefined;
@@ -67,74 +69,192 @@ export default function App() {
     setVue({ ecran: "dossier", id: (urgent ?? DECLARATIONS[0]).id, onglet: "detail" });
   };
 
+  const allerAccueil = () => {
+    setGuide(false);
+    setVue({ ecran: "accueil" });
+  };
+  const allerJournal = () => {
+    setGuide(false);
+    setVue({ ecran: "journal" });
+  };
+  const ouvrirDossier = (id: string, onglet: Onglet) => setVue({ ecran: "dossier", id, onglet });
+  const idCourant = vue.ecran === "dossier" ? vue.id : dernierDossier;
+
   return (
     <div className="app">
-      <header className="entete">
-        <button className="marque" onClick={() => { setGuide(false); setVue({ ecran: "accueil" }); }} aria-label="Sinistra, retour à l'accueil">
-          <span className="logo" aria-hidden>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 3.5c-3.6 4.4-6 7.6-6 10.6a6 6 0 0 0 12 0c0-3-2.4-6.2-6-10.6z" />
-              <path d="M9.2 14.5a2.8 2.8 0 0 0 2.8 2.7" />
-            </svg>
+      <Navigation
+        vue={vue}
+        idCourant={idCourant}
+        allerAccueil={allerAccueil}
+        allerBoite={allerBoite}
+        allerJournal={allerJournal}
+        ouvrirDossier={ouvrirDossier}
+      />
+
+      <div className="colonne">
+        <header className="entete">
+          <button className="marque" onClick={allerAccueil} aria-label="Sinistra, retour à l'accueil">
+            <LogoSinistra />
+            <span>
+              <strong>Sinistra</strong>
+              <small>Tri dégât des eaux</small>
+            </span>
+          </button>
+          <span className="demo-pill" role="note" title="Aucune décision de garantie, de refus ou d'indemnisation n'est prise par l'outil.">
+            Démo, données fictives
           </span>
-          <span>
-            <strong>Sinistra</strong>
-            <small>Tri dégât des eaux</small>
-          </span>
-        </button>
-        <span className="demo-pill" role="note" title="Aucune décision de garantie, de refus ou d'indemnisation n'est prise par l'outil.">
-          Démo, données fictives
-        </span>
-        <div className="entete-droite">
           {moteur && (
             <span className={`moteur moteur-${moteur}`} title={moteur === "ia" ? "Analyse par le modèle Claude, via la fonction serveur" : "Aucune clé API configurée : analyse locale par règles, sans IA"}>
               {moteur === "ia" ? "Analyse IA (Claude)" : "Mode hors ligne : règles, sans IA"}
             </span>
           )}
-          <button className="rond" onClick={() => setVue({ ecran: "journal" })} aria-label="Journal des corrections" title="Journal des corrections">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <rect x="5" y="3.5" width="14" height="17" rx="3" />
-              <path d="M9 8h6M9 12h6M9 16h3" />
-            </svg>
-          </button>
-        </div>
-      </header>
+        </header>
 
-      <main className="contenu">
-        {vue.ecran === "accueil" && (
-          <Accueil analyses={analyses} valides={valides.map((v) => v.dossier)} ouvrirBoite={allerBoite} demarrerGuide={demarrerGuide} />
-        )}
-        {vue.ecran === "boite" && (
-          <BoiteReception
-            analyses={analyses}
-            valides={new Set(valides.map((v) => v.dossier))}
-            ouvrir={(id) => {
-              setGuide(false);
-              setVue({ ecran: "dossier", id, onglet: "detail" });
-            }}
-          />
-        )}
-        {vue.ecran === "dossier" && declaration && (
-          <Dossier
-            key={declaration.id}
-            declaration={declaration}
-            etat={analyses[declaration.id]}
-            onglet={vue.onglet}
-            changerOnglet={(onglet) => setVue({ ecran: "dossier", id: declaration.id, onglet })}
-            retour={allerBoite}
-            guide={guide}
-            quitterGuide={() => setGuide(false)}
-            estValide={valides.some((v) => v.dossier === declaration.id)}
-            surValidation={() => setValides(journal.valides())}
-          />
-        )}
-        {vue.ecran === "journal" && <Journal surReinitialisation={() => setValides([])} />}
-      </main>
+        <main className="contenu" id="contenu">
+          {vue.ecran === "accueil" && (
+            <Accueil analyses={analyses} valides={valides.map((v) => v.dossier)} ouvrirBoite={allerBoite} demarrerGuide={demarrerGuide} />
+          )}
+          {vue.ecran === "boite" && (
+            <BoiteReception
+              analyses={analyses}
+              valides={new Set(valides.map((v) => v.dossier))}
+              ouvrir={(id) => {
+                setGuide(false);
+                setVue({ ecran: "dossier", id, onglet: "detail" });
+              }}
+            />
+          )}
+          {vue.ecran === "dossier" && declaration && (
+            <Dossier
+              key={declaration.id}
+              declaration={declaration}
+              etat={analyses[declaration.id]}
+              onglet={vue.onglet}
+              changerOnglet={(onglet) => setVue({ ecran: "dossier", id: declaration.id, onglet })}
+              retour={allerBoite}
+              guide={guide}
+              quitterGuide={() => setGuide(false)}
+              estValide={valides.some((v) => v.dossier === declaration.id)}
+              surValidation={() => setValides(journal.valides())}
+            />
+          )}
+          {vue.ecran === "journal" && <Journal surReinitialisation={() => setValides([])} />}
+        </main>
 
-      <footer className="pied">
-        Aucune décision de garantie, de refus ou d'indemnisation n'est prise par l'outil. Projet personnel d'Ernestine Matjabo. Cadrage, garde-fous et évaluation : Ernestine Matjabo. Code généré avec Claude Code.
-      </footer>
+        <footer className="pied">
+          Aucune décision de garantie, de refus ou d'indemnisation n'est prise par l'outil. Projet personnel d'Ernestine Matjabo. Cadrage, garde-fous et évaluation : Ernestine Matjabo. Code généré avec Claude Code.
+        </footer>
+      </div>
     </div>
+  );
+}
+
+/* ---------- Navigation : barre latérale (web) et barre en bas (mobile) ---------- */
+
+const traits = {
+  width: 22,
+  height: 22,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.6,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  "aria-hidden": true,
+};
+
+const ICONES = {
+  accueil: (
+    <svg {...traits}><path d="M4 10.5 12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5H15v-5.5H9v5.5H5.5A1.5 1.5 0 0 1 4 19z" /></svg>
+  ),
+  boite: (
+    <svg {...traits}><rect x="4" y="4" width="6.5" height="6.5" rx="2.2" /><rect x="13.5" y="4" width="6.5" height="6.5" rx="2.2" /><rect x="4" y="13.5" width="6.5" height="6.5" rx="2.2" /><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="2.2" /></svg>
+  ),
+  dossier: (
+    <svg {...traits}><path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5a1.5 1.5 0 0 1 1-1.5z" /><path d="M14 3.5V8h4M9 12.5h6M9 16h4" /></svg>
+  ),
+  synthese: (
+    <svg {...traits}><path d="M10 4.5c.6 3.6 1.9 4.9 5.5 5.5-3.6.6-4.9 1.9-5.5 5.5-.6-3.6-1.9-4.9-5.5-5.5 3.6-.6 4.9-1.9 5.5-5.5z" /><path d="M17.5 14c.3 1.7.8 2.2 2.5 2.5-1.7.3-2.2.8-2.5 2.5-.3-1.7-.8-2.2-2.5-2.5 1.7-.3 2.2-.8 2.5-2.5z" /></svg>
+  ),
+  journal: (
+    <svg {...traits}><rect x="5" y="3.5" width="14" height="17" rx="3" /><path d="M9 8h6M9 12h6M9 16h3" /></svg>
+  ),
+};
+
+function LogoSinistra() {
+  return (
+    <span className="logo" aria-hidden>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3.5c-3.6 4.4-6 7.6-6 10.6a6 6 0 0 0 12 0c0-3-2.4-6.2-6-10.6z" />
+        <path d="M9.2 14.5a2.8 2.8 0 0 0 2.8 2.7" />
+      </svg>
+    </span>
+  );
+}
+
+function Navigation({
+  vue,
+  idCourant,
+  allerAccueil,
+  allerBoite,
+  allerJournal,
+  ouvrirDossier,
+}: {
+  vue: Vue;
+  idCourant: string | null;
+  allerAccueil: () => void;
+  allerBoite: () => void;
+  allerJournal: () => void;
+  ouvrirDossier: (id: string, onglet: Onglet) => void;
+}) {
+  const onglet = vue.ecran === "dossier" ? vue.onglet : null;
+  const items: { cle: keyof typeof ICONES; libelle: string; actif: boolean; inactif?: boolean; action: () => void }[] = [
+    { cle: "accueil", libelle: "Accueil", actif: vue.ecran === "accueil", action: allerAccueil },
+    { cle: "boite", libelle: "Boîte", actif: vue.ecran === "boite", action: allerBoite },
+    {
+      cle: "dossier",
+      libelle: "Dossier",
+      actif: onglet === "detail" || onglet === "validation",
+      inactif: !idCourant,
+      action: () => idCourant && ouvrirDossier(idCourant, onglet === "validation" ? "validation" : "detail"),
+    },
+    {
+      cle: "synthese",
+      libelle: "Synthèse",
+      actif: onglet === "synthese",
+      inactif: !idCourant,
+      action: () => idCourant && ouvrirDossier(idCourant, "synthese"),
+    },
+    { cle: "journal", libelle: "Journal", actif: vue.ecran === "journal", action: allerJournal },
+  ];
+
+  return (
+    <nav className="nav" aria-label="Navigation principale">
+      <div className="nav-marque">
+        <LogoSinistra />
+        <span>
+          <strong>Sinistra</strong>
+          <small>Tri dégât des eaux</small>
+        </span>
+      </div>
+      <ul className="nav-liste">
+        {items.map((it) => (
+          <li key={it.cle}>
+            <button
+              className={`nav-item ${it.actif ? "actif" : ""}`}
+              onClick={it.action}
+              disabled={it.inactif}
+              aria-current={it.actif ? "page" : undefined}
+              title={it.inactif ? "Ouvrez d'abord une déclaration" : undefined}
+            >
+              <span className="nav-icone">{ICONES[it.cle]}</span>
+              <span className="nav-libelle">{it.libelle}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {idCourant && <p className="nav-courant">Dossier ouvert : {idCourant}</p>}
+    </nav>
   );
 }
 
@@ -142,6 +262,8 @@ export default function App() {
 
 /** Prénom fictif du gestionnaire de la démo. */
 const PRENOM_GESTIONNAIRE = "Camille";
+/** Lieu et météo fictifs du jour de la démo (18 novembre). */
+const METEO_DEMO = { ville: "Angers", ciel: "Pluie", temperature: 9 };
 
 function Accueil({
   analyses,
@@ -165,7 +287,19 @@ function Accueil({
   return (
     <div className="accueil">
       <section className="accueil-hero">
-        <p className="etape">{jour.charAt(0).toUpperCase() + jour.slice(1)} · données de démonstration</p>
+        <p className="etape contexte-jour">
+          <span>{jour.charAt(0).toUpperCase() + jour.slice(1)}</span>
+          <span aria-hidden>·</span>
+          <span>{METEO_DEMO.ville}</span>
+          <span aria-hidden>·</span>
+          <span className="meteo" title="Météo fictive de la démo">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M7.5 15.5h9a3.5 3.5 0 0 0 .4-7 5 5 0 0 0-9.6 1.2A3 3 0 0 0 7.5 15.5z" />
+              <path d="M9 18.5l-.8 1.8M12.5 18.5l-.8 1.8M16 18.5l-.8 1.8" />
+            </svg>
+            {METEO_DEMO.ciel}, {METEO_DEMO.temperature} °C
+          </span>
+        </p>
         <h1>{salut} {PRENOM_GESTIONNAIRE}, voici votre file du jour</h1>
         <p className="sous-titre">
           Sinistra a lu les déclarations de dégât des eaux reçues. Il a relevé les faits, repéré les cas à traiter en priorité et préparé les questions à poser.
@@ -315,7 +449,7 @@ function BoiteReception({
     <section>
       <div className="titre-ecran">
         <div>
-          <p className="etape">Écran 1 sur 4</p>
+          <p className="etape">Tri des déclarations dégât des eaux</p>
           <h1>Boîte de réception</h1>
           <p className="sous-titre">
             {DECLARATIONS.length} déclarations reçues, {nbUrgents} proposées en urgent. L'urgence est une proposition à valider.
@@ -373,9 +507,9 @@ function Dossier({
   surValidation: () => void;
 }) {
   const onglets: { id: Onglet; libelle: string; etape: number }[] = [
-    { id: "detail", libelle: "Détail et sources", etape: 2 },
-    { id: "validation", libelle: "Validation", etape: 3 },
-    { id: "synthese", libelle: "Synthèse et questions", etape: 4 },
+    { id: "detail", libelle: "Détail", etape: 1 },
+    { id: "validation", libelle: "Validation", etape: 2 },
+    { id: "synthese", libelle: "Synthèse", etape: 3 },
   ];
 
   return (
@@ -386,7 +520,7 @@ function Dossier({
       <div className="titre-ecran">
         <div>
           <p className="etape">
-            Écran {onglets.find((o) => o.id === onglet)!.etape} sur 4 · {declaration.canal} · {formaterDate(declaration.recueLe)}
+            {declaration.canal} · {formaterDate(declaration.recueLe)}
           </p>
           <h1>
             {declaration.id} {estValide && <span className="statut statut-ok">Validé</span>}
@@ -396,13 +530,18 @@ function Dossier({
         {etat && etat !== "chargement" && <BadgeUrgence niveau={etat.analyse.urgence.niveau} />}
       </div>
 
-      <nav className="onglets" aria-label="Étapes du dossier">
+      <div className="onglets" role="group" aria-label="Étapes du dossier">
         {onglets.map((o) => (
-          <button key={o.id} className={o.id === onglet ? "actif" : ""} onClick={() => changerOnglet(o.id)}>
-            <span className="num">{o.etape}</span> {o.libelle}
+          <button
+            key={o.id}
+            className={o.id === onglet ? "actif" : ""}
+            aria-pressed={o.id === onglet}
+            onClick={() => changerOnglet(o.id)}
+          >
+            <span className="num" aria-hidden>{o.etape}</span> {o.libelle}
           </button>
         ))}
-      </nav>
+      </div>
 
       {guide && <BandeauGuide onglet={onglet} changerOnglet={changerOnglet} terminer={retour} quitter={quitterGuide} />}
 
