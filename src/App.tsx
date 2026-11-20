@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DECLARATIONS, type Declaration } from "./data/declarations";
 import { analyser } from "./lib/analyser";
-import { journal, type Correction } from "./lib/journal";
+import { journal, type Correction, type DossierValide } from "./lib/journal";
 import { localiserSource } from "./shared/guardrails";
 import { LIBELLES_CHAMPS, type Champ, type Fait, type NiveauUrgence, type ResultatAnalyse } from "./shared/schema";
 
@@ -13,9 +13,41 @@ type Decision = { statut: "accepte" | "corrige"; valeur: string };
 const ORDRE_URGENCE: Record<NiveauUrgence, number> = { urgent: 0, normal: 1, faible: 2 };
 const LIBELLE_URGENCE: Record<NiveauUrgence, string> = { urgent: "Urgent", normal: "Normal", faible: "Faible" };
 
-function formaterDate(iso: string) {
-  return new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+function formaterHorodatage(iso: string) {
+  const d = new Date(iso);
+  const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+  const heure = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return `${jour} à ${heure}`;
 }
+
+function IconeCoche() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8.2 12.3 2.6 2.6 5-5.4" />
+    </svg>
+  );
+}
+
+/** « Envoyée le mer. 18 nov. à 07:42 » (ou « Appel le … » pour un appel retranscrit). */
+function Envoi({ declaration }: { declaration: Declaration }) {
+  const d = new Date(declaration.recueLe);
+  const jour = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+  const heure = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const verbe = declaration.canal === "Appel retranscrit" ? "Appel le" : "Envoyée le";
+  return (
+    <span className="envoi">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 7.5V12l3 2" />
+      </svg>
+      <span>
+        {verbe} <strong>{jour}</strong> à <strong>{heure}</strong>
+      </span>
+    </span>
+  );
+}
+
 
 export default function App() {
   const [analyses, setAnalyses] = useState<Record<string, EtatAnalyse>>({});
@@ -61,10 +93,15 @@ export default function App() {
   };
   const demarrerGuide = () => {
     // Cas le plus parlant : le premier dossier proposé en urgent (à défaut, le premier reçu).
-    const urgent = DECLARATIONS.find((d) => {
-      const e = analyses[d.id];
-      return e && e !== "chargement" && e.analyse.urgence.niveau === "urgent";
-    });
+    const estUrgent = (id: string) => {
+      const e = analyses[id];
+      return !!e && e !== "chargement" && e.analyse.urgence.niveau === "urgent";
+    };
+    const dejaValide = (id: string) => valides.some((v) => v.dossier === id);
+    const urgent =
+      DECLARATIONS.find((d) => estUrgent(d.id) && !dejaValide(d.id)) ??
+      DECLARATIONS.find((d) => !dejaValide(d.id)) ??
+      DECLARATIONS.find((d) => estUrgent(d.id));
     setGuide(true);
     setVue({ ecran: "dossier", id: (urgent ?? DECLARATIONS[0]).id, onglet: "detail" });
   };
@@ -117,7 +154,7 @@ export default function App() {
           {vue.ecran === "boite" && (
             <BoiteReception
               analyses={analyses}
-              valides={new Set(valides.map((v) => v.dossier))}
+              validations={valides}
               ouvrir={(id) => {
                 setGuide(false);
                 setVue({ ecran: "dossier", id, onglet: "detail" });
@@ -135,6 +172,7 @@ export default function App() {
               guide={guide}
               quitterGuide={() => setGuide(false)}
               estValide={valides.some((v) => v.dossier === declaration.id)}
+              validation={valides.find((v) => v.dossier === declaration.id)}
               surValidation={() => setValides(journal.valides())}
             />
           )}
@@ -253,7 +291,7 @@ function Navigation({
           </li>
         ))}
       </ul>
-      {idCourant && <p className="nav-courant">Dossier ouvert : {idCourant}</p>}
+      {idCourant && <p className="nav-courant">Dossier ouvert : <strong className="num-dossier">{idCourant}</strong></p>}
     </nav>
   );
 }
@@ -424,62 +462,183 @@ function BadgeUrgence({ niveau }: { niveau: NiveauUrgence }) {
   return <span className={`badge badge-${niveau}`}>{LIBELLE_URGENCE[niveau]}</span>;
 }
 
+type Filtre = "toutes" | "urgentes" | "a_valider" | "validees";
+
+type Signal = { libelle: string; grave: boolean };
+
+/** Signaux lisibles qui expliquent le tri, tirés des faits sourcés et des alertes. */
+function signauxDe(r: ResultatAnalyse): Signal[] {
+  const valeur = (c: Champ) => r.analyse.faits.find((f) => f.champ === c)?.valeur.toLowerCase();
+  const s: Signal[] = [];
+  if (valeur("electricite_touchee") === "oui") s.push({ libelle: "Électricité touchée", grave: true });
+  if (valeur("personnes_en_danger") === "oui") s.push({ libelle: "Personne en danger", grave: true });
+  if (valeur("coupure_eau") === "non") s.push({ libelle: "Eau non coupée", grave: true });
+  if (valeur("tiers_implique") === "oui") s.push({ libelle: "Voisin concerné", grave: false });
+  if (r.analyse.alertes.some((a) => /consigne|instruction/i.test(a))) s.push({ libelle: "Consignes suspectes ignorées", grave: false });
+  if (r.analyse.informations_manquantes.length >= 6) s.push({ libelle: "Très incomplète", grave: false });
+  return s;
+}
+
+function BarresProgression({ fait, total }: { fait: number; total: number }) {
+  const N = 40;
+  const pleins = total === 0 ? 0 : Math.round((fait / total) * N);
+  return (
+    <div className="progression">
+      <div className="progression-legende">
+        <span>Validés</span>
+        <span>À valider</span>
+      </div>
+      <div className="barres" aria-hidden>
+        {Array.from({ length: N }, (_, i) => (
+          <span key={i} className={i < pleins ? "plein" : ""} />
+        ))}
+      </div>
+      <div className="progression-legende progression-chiffres">
+        <span>{fait}</span>
+        <span>{total - fait}</span>
+      </div>
+    </div>
+  );
+}
+
 function BoiteReception({
   analyses,
-  valides,
+  validations,
   ouvrir,
 }: {
   analyses: Record<string, EtatAnalyse>;
-  valides: Set<string>;
+  validations: DossierValide[];
   ouvrir: (id: string) => void;
 }) {
-  const lignes = [...DECLARATIONS].sort((a, b) => {
-    const ea = analyses[a.id];
-    const eb = analyses[b.id];
-    const ua = ea && ea !== "chargement" ? ORDRE_URGENCE[ea.analyse.urgence.niveau] : 9;
-    const ub = eb && eb !== "chargement" ? ORDRE_URGENCE[eb.analyse.urgence.niveau] : 9;
-    return ua - ub || a.recueLe.localeCompare(b.recueLe);
+  const [filtre, setFiltre] = useState<Filtre>("toutes");
+  const resultat = (id: string) => {
+    const e = analyses[id];
+    return e && e !== "chargement" ? e : null;
+  };
+  const niveau = (id: string) => resultat(id)?.analyse.urgence.niveau ?? null;
+  const valides = new Set(validations.map((v) => v.dossier));
+  const validationDe = (id: string) => validations.find((v) => v.dossier === id);
+
+  // À traiter d'abord (par urgence puis heure d'envoi), dossiers validés en bas.
+  const triees = [...DECLARATIONS].sort((a, b) => {
+    const va = valides.has(a.id) ? 1 : 0;
+    const vb = valides.has(b.id) ? 1 : 0;
+    if (va !== vb) return va - vb;
+    const na = niveau(a.id);
+    const nb = niveau(b.id);
+    return (na ? ORDRE_URGENCE[na] : 9) - (nb ? ORDRE_URGENCE[nb] : 9) || a.recueLe.localeCompare(b.recueLe);
   });
-  const nbUrgents = lignes.filter((d) => {
-    const e = analyses[d.id];
-    return e && e !== "chargement" && e.analyse.urgence.niveau === "urgent";
-  }).length;
+  const correspond = (id: string, f: Filtre) =>
+    f === "toutes" ||
+    (f === "urgentes" && niveau(id) === "urgent") ||
+    (f === "a_valider" && !valides.has(id)) ||
+    (f === "validees" && valides.has(id));
+  const compte = (f: Filtre) => DECLARATIONS.filter((d) => correspond(d.id, f)).length;
+  const lignes = triees.filter((d) => correspond(d.id, filtre));
+
+  const parNiveau = (n: NiveauUrgence) => DECLARATIONS.filter((d) => niveau(d.id) === n).length;
+  const nbValides = compte("validees");
+  const taux = Math.round((nbValides / DECLARATIONS.length) * 100);
+
+  const filtres: { id: Filtre; libelle: string }[] = [
+    { id: "toutes", libelle: "Toutes" },
+    { id: "urgentes", libelle: "Urgentes" },
+    { id: "a_valider", libelle: "À valider" },
+    { id: "validees", libelle: "Validées" },
+  ];
 
   return (
-    <section>
-      <div className="titre-ecran">
-        <div>
-          <p className="etape">Tri des déclarations dégât des eaux</p>
-          <h1>Boîte de réception</h1>
-          <p className="sous-titre">
-            {DECLARATIONS.length} déclarations reçues, {nbUrgents} proposées en urgent. L'urgence est une proposition à valider.
-          </p>
+    <div className="boite">
+      <section className="boite-tete">
+        <p className="etape">Tri des déclarations dégât des eaux</p>
+        <h1>Boîte de réception</h1>
+        <div className="chips">
+          <span className="chip"><span className="chip-cle">Reçues</span> {DECLARATIONS.length}</span>
+          <span className="chip"><span className="chip-cle">Urgentes</span> {parNiveau("urgent")}</span>
+          <span className="chip"><span className="chip-cle">À valider</span> {compte("a_valider")}</span>
         </div>
-      </div>
-      <ul className="liste">
-        {lignes.map((d) => {
-          const e = analyses[d.id];
-          return (
-            <li key={d.id}>
-              <button className="ligne" onClick={() => ouvrir(d.id)}>
-                <span className="ligne-urgence">
-                  {!e || e === "chargement" ? <span className="badge badge-attente">Analyse…</span> : <BadgeUrgence niveau={e.analyse.urgence.niveau} />}
-                </span>
-                <span className="ligne-corps">
-                  <span className="ligne-meta">
-                    <strong>{d.id}</strong> · {d.canal} · {formaterDate(d.recueLe)}
-                  </span>
-                  <span className="ligne-extrait">{d.texte}</span>
-                </span>
-                <span className="ligne-statut">
-                  {valides.has(d.id) ? <span className="statut statut-ok">Validé</span> : <span className="statut">À valider</span>}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+      </section>
+
+      <section className="boite-liste" aria-label="Déclarations">
+        <div className="filtres" role="group" aria-label="Filtrer les déclarations">
+          {filtres.map((f) => (
+            <button key={f.id} className={`filtre ${filtre === f.id ? "actif" : ""}`} aria-pressed={filtre === f.id} onClick={() => setFiltre(f.id)}>
+              {f.libelle} <span className="filtre-compte">{compte(f.id)}</span>
+            </button>
+          ))}
+        </div>
+
+        {lignes.length === 0 ? (
+          <p className="carte vide">Aucune déclaration dans ce filtre.</p>
+        ) : (
+          <ul className="liste">
+            {lignes.map((d) => {
+              const r = resultat(d.id);
+              const n = r?.analyse.urgence.niveau;
+              const signaux = r ? signauxDe(r) : [];
+              const validation = validationDe(d.id);
+              const classe = validation ? "declaration-validee" : n === "urgent" ? "declaration-urgente" : "";
+              return (
+                <li key={d.id}>
+                  <button
+                    className={`declaration ${classe}`}
+                    onClick={() => ouvrir(d.id)}
+                    aria-label={`Ouvrir ${d.id}${validation ? ", dossier validé" : ", à valider"}`}
+                  >
+                    {validation && (
+                      <span className="bandeau-valide">
+                        <IconeCoche /> Validé le <strong>{formaterHorodatage(validation.valide_le)}</strong>
+                      </span>
+                    )}
+                    <span className="declaration-haut">
+                      {n ? <BadgeUrgence niveau={n} /> : <span className="badge badge-attente">Analyse…</span>}
+                      {!validation && <span className="statut">À valider</span>}
+                      <span className="rond-fleche" aria-hidden>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 16 16 8M9.5 8H16v6.5" /></svg>
+                      </span>
+                    </span>
+                    <span className="declaration-meta">
+                      <strong className="num-dossier">{d.id}</strong> · {d.canal}
+                    </span>
+                    <span className="declaration-meta declarant">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <circle cx="12" cy="8" r="3.5" />
+                        <path d="M5 19.5c1.2-3.3 3.8-5 7-5s5.8 1.7 7 5" />
+                      </svg>
+                      <span><strong>{d.declarant}</strong> · {d.ville}</span>
+                    </span>
+                    <span className="declaration-meta">
+                      <Envoi declaration={d} />
+                    </span>
+                    <span className="declaration-extrait">{d.texte}</span>
+                    {signaux.length > 0 && (
+                      <span className="signaux">
+                        {signaux.map((sg) => (
+                          <span key={sg.libelle} className={`signal ${sg.grave ? "signal-grave" : ""}`}>{sg.libelle}</span>
+                        ))}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <aside className="carte avancement" aria-label="Avancement du tri">
+        <h2>Avancement du tri</h2>
+        <p className="petit">Dossiers validés par le gestionnaire</p>
+        <p className="grand-chiffre">{taux}<span>%</span></p>
+        <BarresProgression fait={nbValides} total={DECLARATIONS.length} />
+        <div className="indicateurs">
+          <div><strong>{parNiveau("urgent")} <span className="point point-urgent" aria-hidden /></strong><span>Urgents</span></div>
+          <div><strong>{parNiveau("normal")} <span className="point point-normal" aria-hidden /></strong><span>Normaux</span></div>
+          <div><strong>{parNiveau("faible")} <span className="point point-faible" aria-hidden /></strong><span>Faibles</span></div>
+        </div>
+        <p className="aide">L'urgence est une proposition de Sinistra. Vous la confirmez ou la corrigez à la validation.</p>
+      </aside>
+    </div>
   );
 }
 
@@ -494,6 +653,7 @@ function Dossier({
   guide,
   quitterGuide,
   estValide,
+  validation,
   surValidation,
 }: {
   declaration: Declaration;
@@ -504,6 +664,7 @@ function Dossier({
   guide: boolean;
   quitterGuide: () => void;
   estValide: boolean;
+  validation?: DossierValide;
   surValidation: () => void;
 }) {
   const onglets: { id: Onglet; libelle: string; etape: number }[] = [
@@ -520,15 +681,29 @@ function Dossier({
       <div className="titre-ecran">
         <div>
           <p className="etape">
-            {declaration.canal} · {formaterDate(declaration.recueLe)}
+            {declaration.canal} · <Envoi declaration={declaration} />
           </p>
           <h1>
-            {declaration.id} {estValide && <span className="statut statut-ok">Validé</span>}
+            {declaration.id}
           </h1>
-          <p className="sous-titre">{declaration.declarant} · {declaration.ville}</p>
+          <div className="chips chips-dossier">
+            <span className="chip"><span className="chip-cle">Déclarant</span> {declaration.declarant}</span>
+            <span className="chip"><span className="chip-cle">Ville</span> {declaration.ville}</span>
+            <span className="chip"><span className="chip-cle">Logement</span> {declaration.logement}</span>
+            <span className="chip"><span className="chip-cle">Statut</span> {declaration.occupation}</span>
+          </div>
         </div>
         {etat && etat !== "chargement" && <BadgeUrgence niveau={etat.analyse.urgence.niveau} />}
       </div>
+
+      {validation && (
+        <p className="dossier-valide" role="status">
+          <IconeCoche />
+          <span className="insecable">Dossier validé le <strong>{formaterHorodatage(validation.valide_le)}</strong></span>
+          <span aria-hidden>·</span>
+          <span className="insecable"><strong>{validation.nb_corrections}</strong> correction{validation.nb_corrections > 1 ? "s" : ""}</span>
+        </p>
+      )}
 
       <div className="onglets" role="group" aria-label="Étapes du dossier">
         {onglets.map((o) => (
@@ -568,25 +743,68 @@ function Dossier({
   );
 }
 
-function TexteSurligne({ texte, faits, actif }: { texte: string; faits: Fait[]; actif: Champ | null }) {
+function TexteSurligne({
+  texte,
+  faits,
+  actif,
+  survoler,
+}: {
+  texte: string;
+  faits: Fait[];
+  actif: Champ | null;
+  survoler: (c: Champ | null) => void;
+}) {
+  // Plages sources (elles peuvent se chevaucher : plusieurs faits citent parfois la même phrase).
   const plages = faits
     .map((f) => ({ champ: f.champ, pos: localiserSource(f.source, texte) }))
-    .filter((p): p is { champ: Champ; pos: { debut: number; fin: number } } => p.pos !== null)
-    .sort((a, b) => a.pos.debut - b.pos.debut);
+    .filter((p): p is { champ: Champ; pos: { debut: number; fin: number } } => p.pos !== null);
+
+  // Mot exact de la valeur active, s'il figure dans sa source (ex. « cuisine »).
+  let motActif: { debut: number; fin: number } | null = null;
+  const faitActif = faits.find((f) => f.champ === actif);
+  const plageActive = plages.find((p) => p.champ === actif);
+  if (faitActif && plageActive && faitActif.valeur.length > 2) {
+    const extrait = texte.slice(plageActive.pos.debut, plageActive.pos.fin).toLowerCase();
+    const i = extrait.indexOf(faitActif.valeur.toLowerCase());
+    if (i >= 0) motActif = { debut: plageActive.pos.debut + i, fin: plageActive.pos.debut + i + faitActif.valeur.length };
+  }
+
+  // Découpage du texte en segments homogènes.
+  const bornes = new Set<number>([0, texte.length]);
+  for (const p of plages) {
+    bornes.add(p.pos.debut);
+    bornes.add(p.pos.fin);
+  }
+  if (motActif) {
+    bornes.add(motActif.debut);
+    bornes.add(motActif.fin);
+  }
+  const points = [...bornes].sort((x, y) => x - y);
 
   const morceaux: ReactNode[] = [];
-  let curseur = 0;
-  for (const p of plages) {
-    if (p.pos.debut < curseur) continue; // chevauchement : on garde le premier
-    if (p.pos.debut > curseur) morceaux.push(texte.slice(curseur, p.pos.debut));
+  for (let k = 0; k < points.length - 1; k++) {
+    const debut = points[k];
+    const fin = points[k + 1];
+    const morceau = texte.slice(debut, fin);
+    const champs = plages.filter((p) => p.pos.debut <= debut && p.pos.fin >= fin).map((p) => p.champ);
+    if (champs.length === 0) {
+      morceaux.push(morceau);
+      continue;
+    }
+    const estActif = actif !== null && champs.includes(actif);
+    const estMot = motActif !== null && debut >= motActif.debut && fin <= motActif.fin;
     morceaux.push(
-      <mark key={p.champ} className={actif === p.champ ? "actif" : ""} title={LIBELLES_CHAMPS[p.champ]}>
-        {texte.slice(p.pos.debut, p.pos.fin)}
+      <mark
+        key={debut}
+        className={`${estActif ? "actif" : ""} ${estMot ? "mot" : ""}`}
+        title={champs.map((c) => LIBELLES_CHAMPS[c]).join(", ")}
+        onMouseEnter={() => survoler(champs[0])}
+        onMouseLeave={() => survoler(null)}
+      >
+        {morceau}
       </mark>,
     );
-    curseur = p.pos.fin;
   }
-  morceaux.push(texte.slice(curseur));
   return <p className="texte-declaration">{morceaux}</p>;
 }
 
@@ -597,21 +815,31 @@ function Detail({ declaration, resultat }: { declaration: Declaration; resultat:
     <div className="deux-colonnes">
       <article className="carte">
         <h2>Déclaration (texte d'origine)</h2>
-        <TexteSurligne texte={declaration.texte} faits={analyse.faits} actif={actif} />
-        <p className="aide">Les passages surlignés sont les sources des faits extraits. Survolez un fait pour le retrouver.</p>
+        <TexteSurligne texte={declaration.texte} faits={analyse.faits} actif={actif} survoler={setActif} />
+        <p className="aide">Les passages surlignés sont les sources des faits extraits. Survolez ou touchez un fait pour le retrouver dans le texte.</p>
       </article>
       <article className="carte">
         <h2>Faits extraits ({analyse.faits.length})</h2>
         {analyse.faits.length === 0 && <p className="vide">Aucun fait sourcé n'a pu être extrait.</p>}
         <ul className="faits">
           {analyse.faits.map((f) => (
-            <li key={f.champ} onMouseEnter={() => setActif(f.champ)} onMouseLeave={() => setActif(null)} onFocus={() => setActif(f.champ)} tabIndex={0}>
-              <div className="fait-tete">
-                <span className="fait-champ">{LIBELLES_CHAMPS[f.champ]}</span>
-                <span className={`confiance confiance-${f.confiance}`}>Confiance {f.confiance}</span>
-              </div>
-              <div className="fait-valeur">{f.valeur}</div>
-              <blockquote>« {f.source} »</blockquote>
+            <li key={f.champ}>
+              <button
+                className={`fait ${actif === f.champ ? "actif" : ""}`}
+                aria-pressed={actif === f.champ}
+                onMouseEnter={() => setActif(f.champ)}
+                onMouseLeave={() => setActif(null)}
+                onFocus={() => setActif(f.champ)}
+                onBlur={() => setActif(null)}
+                onClick={() => setActif(actif === f.champ ? null : f.champ)}
+              >
+                <span className="fait-tete">
+                  <span className="fait-champ">{LIBELLES_CHAMPS[f.champ]}</span>
+                  <span className={`confiance confiance-${f.confiance}`}>Confiance {f.confiance}</span>
+                </span>
+                <span className="fait-valeur">{f.valeur}</span>
+                <span className="fait-source">« {f.source} »</span>
+              </button>
             </li>
           ))}
         </ul>
@@ -867,7 +1095,7 @@ function Journal({ surReinitialisation }: { surReinitialisation: () => void }) {
             <tbody>
               {corrections.map((c, i) => (
                 <tr key={i}>
-                  <td>{c.dossier}</td>
+                  <td><strong className="num-dossier">{c.dossier}</strong></td>
                   <td>{c.champ === "urgence" ? "Niveau d'urgence" : LIBELLES_CHAMPS[c.champ as Champ] ?? c.champ}</td>
                   <td><s>{c.valeur_proposee}</s></td>
                   <td><strong>{c.valeur_corrigee}</strong></td>
