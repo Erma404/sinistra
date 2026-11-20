@@ -22,6 +22,10 @@ export type DossierValide = {
 
 const CLE_JOURNAL = "sinistra.journal.v1";
 const CLE_VALIDES = "sinistra.valides.v1";
+const CLE_MAILS = "sinistra.mails.v1";
+
+/** Confirmation, par le gestionnaire, que le mail de rebond a été envoyé depuis sa messagerie. */
+export type MailEnvoye = { dossier: string; envoye_le: string };
 
 function lire<T>(cle: string): T[] {
   try {
@@ -43,6 +47,17 @@ function ecrire<T>(cle: string, valeurs: T[]) {
 export const journal = {
   corrections: () => lire<Correction>(CLE_JOURNAL),
   valides: () => lire<DossierValide>(CLE_VALIDES),
+  mails: () => lire<MailEnvoye>(CLE_MAILS),
+
+  marquerMailEnvoye(dossier: string): MailEnvoye {
+    const m = { dossier, envoye_le: new Date().toISOString() };
+    ecrire(CLE_MAILS, [...lire<MailEnvoye>(CLE_MAILS).filter((x) => x.dossier !== dossier), m]);
+    return m;
+  },
+
+  annulerMailEnvoye(dossier: string) {
+    ecrire(CLE_MAILS, lire<MailEnvoye>(CLE_MAILS).filter((x) => x.dossier !== dossier));
+  },
 
   /** Enregistre la validation explicite du gestionnaire et ses corrections. */
   enregistrerValidation(dossier: DossierValide, corrections: Correction[]) {
@@ -56,11 +71,16 @@ export const journal = {
   reinitialiser() {
     ecrire(CLE_JOURNAL, []);
     ecrire(CLE_VALIDES, []);
+    ecrire(CLE_MAILS, []);
   },
 
   exporter(): string {
     return JSON.stringify(
-      { corrections: lire<Correction>(CLE_JOURNAL), dossiers_valides: lire<DossierValide>(CLE_VALIDES) },
+      {
+        corrections: lire<Correction>(CLE_JOURNAL),
+        dossiers_valides: lire<DossierValide>(CLE_VALIDES),
+        mails_envoyes: lire<MailEnvoye>(CLE_MAILS),
+      },
       null,
       2,
     );

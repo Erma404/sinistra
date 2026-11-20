@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DECLARATIONS, type Declaration } from "./data/declarations";
 import { analyser } from "./lib/analyser";
-import { journal, type Correction, type DossierValide } from "./lib/journal";
+import { journal, type Correction, type DossierValide, type MailEnvoye } from "./lib/journal";
+import { brouillonMailRebond } from "./lib/mailRebond";
 import { localiserSource } from "./shared/guardrails";
 import { LIBELLES_CHAMPS, type Champ, type Fait, type NiveauUrgence, type ResultatAnalyse } from "./shared/schema";
 
@@ -106,6 +107,19 @@ export default function App() {
     setVue({ ecran: "dossier", id: (urgent ?? DECLARATIONS[0]).id, onglet: "detail" });
   };
 
+  /** Prochain dossier à traiter : non validé, par urgence puis heure d'envoi. */
+  const prochainDossier = (courant: string) => {
+    const niveau = (id: string) => {
+      const e = analyses[id];
+      return e && e !== "chargement" ? ORDRE_URGENCE[e.analyse.urgence.niveau] : 9;
+    };
+    return (
+      [...DECLARATIONS]
+        .filter((d) => d.id !== courant && !valides.some((v) => v.dossier === d.id))
+        .sort((a, b) => niveau(a.id) - niveau(b.id) || a.recueLe.localeCompare(b.recueLe))[0]?.id ?? null
+    );
+  };
+
   const allerAccueil = () => {
     setGuide(false);
     setVue({ ecran: "accueil" });
@@ -173,6 +187,10 @@ export default function App() {
               quitterGuide={() => setGuide(false)}
               estValide={valides.some((v) => v.dossier === declaration.id)}
               validation={valides.find((v) => v.dossier === declaration.id)}
+              dossierSuivant={(() => {
+                const id = prochainDossier(declaration.id);
+                return id ? { id, ouvrir: () => { setGuide(false); setVue({ ecran: "dossier", id, onglet: "detail" }); } } : null;
+              })()}
               surValidation={() => setValides(journal.valides())}
             />
           )}
@@ -479,14 +497,24 @@ function signauxDe(r: ResultatAnalyse): Signal[] {
   return s;
 }
 
-function BarresProgression({ fait, total }: { fait: number; total: number }) {
+function BarresProgression({
+  fait,
+  total,
+  gauche = "Validés",
+  droite = "À valider",
+}: {
+  fait: number;
+  total: number;
+  gauche?: string;
+  droite?: string;
+}) {
   const N = 40;
   const pleins = total === 0 ? 0 : Math.round((fait / total) * N);
   return (
     <div className="progression">
       <div className="progression-legende">
-        <span>Validés</span>
-        <span>À valider</span>
+        <span>{gauche}</span>
+        <span>{droite}</span>
       </div>
       <div className="barres" aria-hidden>
         {Array.from({ length: N }, (_, i) => (
@@ -655,6 +683,7 @@ function Dossier({
   estValide,
   validation,
   surValidation,
+  dossierSuivant,
 }: {
   declaration: Declaration;
   etat: EtatAnalyse | undefined;
@@ -666,6 +695,7 @@ function Dossier({
   estValide: boolean;
   validation?: DossierValide;
   surValidation: () => void;
+  dossierSuivant: { id: string; ouvrir: () => void } | null;
 }) {
   const onglets: { id: Onglet; libelle: string; etape: number }[] = [
     { id: "detail", libelle: "Détail", etape: 1 },
@@ -736,7 +766,7 @@ function Dossier({
               }}
             />
           )}
-          {onglet === "synthese" && <Synthese resultat={etat} />}
+          {onglet === "synthese" && <Synthese declaration={declaration} resultat={etat} dossierSuivant={dossierSuivant} />}
         </>
       )}
     </section>
@@ -808,21 +838,22 @@ function TexteSurligne({
   return <p className="texte-declaration">{morceaux}</p>;
 }
 
+const SITUATION: Champ[] = ["date_sinistre", "lieu", "cause_apparente", "etendue_degats"];
+const RISQUES: Champ[] = ["personnes_en_danger", "electricite_touchee", "coupure_eau", "tiers_implique", "photos_mentionnees"];
+
 function Detail({ declaration, resultat }: { declaration: Declaration; resultat: ResultatAnalyse }) {
   const [actif, setActif] = useState<Champ | null>(null);
   const { analyse } = resultat;
-  return (
-    <div className="deux-colonnes">
-      <article className="carte">
-        <h2>Déclaration (texte d'origine)</h2>
-        <TexteSurligne texte={declaration.texte} faits={analyse.faits} actif={actif} survoler={setActif} />
-        <p className="aide">Les passages surlignés sont les sources des faits extraits. Survolez ou touchez un fait pour le retrouver dans le texte.</p>
-      </article>
-      <article className="carte">
-        <h2>Faits extraits ({analyse.faits.length})</h2>
-        {analyse.faits.length === 0 && <p className="vide">Aucun fait sourcé n'a pu être extrait.</p>}
+  const signaux = signauxDe(resultat);
+
+  const groupe = (titre: string, champs: Champ[]) => {
+    const faits = analyse.faits.filter((f) => champs.includes(f.champ));
+    if (faits.length === 0) return null;
+    return (
+      <div className="groupe-faits">
+        <h3>{titre}</h3>
         <ul className="faits">
-          {analyse.faits.map((f) => (
+          {faits.map((f) => (
             <li key={f.champ}>
               <button
                 className={`fait ${actif === f.champ ? "actif" : ""}`}
@@ -843,16 +874,47 @@ function Detail({ declaration, resultat }: { declaration: Declaration; resultat:
             </li>
           ))}
         </ul>
+      </div>
+    );
+  };
+
+  return (
+    <div className="detail">
+      <section className={`carte urgence-carte urgence-${analyse.urgence.niveau}`} aria-label="Urgence proposée">
+        <div className="urgence-tete">
+          <p className="petit">Urgence proposée par Sinistra</p>
+          <BadgeUrgence niveau={analyse.urgence.niveau} />
+        </div>
+        <p className="urgence-justification">{analyse.urgence.justification}</p>
+        {signaux.length > 0 && (
+          <div className="signaux">
+            {signaux.map((sg) => (
+              <span key={sg.libelle} className={`signal ${sg.grave ? "signal-grave" : ""}`}>{sg.libelle}</span>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="carte detail-faits" aria-label="Faits extraits">
+        <div className="carte-tete">
+          <h2>Faits extraits</h2>
+          <span className="compteur">{analyse.faits.length}</span>
+        </div>
+        {analyse.faits.length === 0 && <p className="vide">Aucun fait sourcé n'a pu être extrait.</p>}
+        {groupe("Situation", SITUATION)}
+        {groupe("Risques", RISQUES)}
         {resultat.faits_rejetes.length > 0 && (
           <p className="aide">
-            {resultat.faits_rejetes.length} fait(s) retiré(s) par le garde-fou : source introuvable dans la déclaration.
+            <strong>{resultat.faits_rejetes.length}</strong> fait(s) retiré(s) par le garde-fou : source introuvable dans la déclaration.
           </p>
         )}
-        <div className="urgence-bloc">
-          <h3>Urgence proposée : {LIBELLE_URGENCE[analyse.urgence.niveau]}</h3>
-          <p>{analyse.urgence.justification}</p>
-        </div>
-      </article>
+      </section>
+
+      <section className="carte detail-texte" aria-label="Déclaration d'origine">
+        <h2>Déclaration d'origine</h2>
+        <TexteSurligne texte={declaration.texte} faits={analyse.faits} actif={actif} survoler={setActif} />
+        <p className="aide">Les passages surlignés sont les sources des faits. Survolez ou touchez un fait pour le retrouver dans le texte.</p>
+      </section>
     </div>
   );
 }
@@ -874,10 +936,20 @@ function Validation({
   const [brouillon, setBrouillon] = useState("");
 
   const lignes = [
-    { cle: "urgence", libelle: "Niveau d'urgence", propose: analyse.urgence.niveau, source: analyse.urgence.sources[0] },
+    { cle: "urgence", libelle: "Niveau d'urgence", propose: analyse.urgence.niveau as string, source: analyse.urgence.sources[0] },
     ...analyse.faits.map((f) => ({ cle: f.champ as string, libelle: LIBELLES_CHAMPS[f.champ], propose: f.valeur, source: f.source })),
   ];
-  const restantes = lignes.filter((l) => !decisions[l.cle]).length;
+  const traitees = lignes.filter((l) => decisions[l.cle]).length;
+  const restantes = lignes.length - traitees;
+
+  const affiche = (cle: string, v: string) => (cle === "urgence" ? LIBELLE_URGENCE[v as NiveauUrgence] ?? v : v);
+  const decider = (cle: string, d: Decision) => setDecisions((x) => ({ ...x, [cle]: d }));
+  const toutAccepter = () =>
+    setDecisions((x) => {
+      const suite = { ...x };
+      for (const l of lignes) if (!suite[l.cle]) suite[l.cle] = { statut: "accepte", valeur: l.propose };
+      return suite;
+    });
 
   const valider = () => {
     const horodatage = new Date().toISOString();
@@ -905,137 +977,242 @@ function Validation({
   };
 
   return (
-    <article className="carte">
-      <h2>Accepter ou corriger chaque proposition</h2>
-      <p className="aide">
-        Rien n'est enregistré tant que vous n'avez pas cliqué sur « Valider le dossier ». Chaque correction alimente le journal utilisé pour l'évaluation.
-      </p>
-      {estValide && <p className="info">Ce dossier a déjà été validé. Une nouvelle validation remplace la précédente.</p>}
-      <table className="table-validation">
-        <thead>
-          <tr>
-            <th>Champ</th>
-            <th>Proposition</th>
-            <th>Décision</th>
-          </tr>
-        </thead>
-        <tbody>
-          {lignes.map((l) => {
-            const d = decisions[l.cle];
-            return (
-              <tr key={l.cle} className={d ? `decide-${d.statut}` : ""}>
-                <td>
-                  <strong>{l.libelle}</strong>
-                  {l.source && <small className="source-mini">« {l.source} »</small>}
-                </td>
-                <td>
-                  {d?.statut === "corrige" ? (
-                    <>
-                      <s>{l.propose}</s> → <strong>{d.valeur}</strong>
-                    </>
-                  ) : (
-                    l.propose
-                  )}
-                </td>
-                <td className="actions">
-                  {enEdition === l.cle ? (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (!brouillon.trim() || brouillon.trim() === l.propose) return;
-                        setDecisions((x) => ({ ...x, [l.cle]: { statut: "corrige", valeur: brouillon.trim() } }));
+    <div className="validation">
+      <section className="carte">
+        <div className="carte-tete">
+          <h2>Accepter ou corriger</h2>
+          <span className="compteur"><strong>{traitees}</strong> sur <strong>{lignes.length}</strong> traités</span>
+        </div>
+        <BarresProgression fait={traitees} total={lignes.length} gauche="Traités" droite="Restants" />
+        <p className="aide">Rien n'est enregistré avant « Valider le dossier ». Chaque correction alimente le journal utilisé pour l'évaluation.</p>
+        {estValide && <p className="info">Ce dossier a déjà été validé. Une nouvelle validation remplace la précédente.</p>}
+      </section>
+
+      <ul className="decisions">
+        {lignes.map((l) => {
+          const d = decisions[l.cle];
+          const enCours = enEdition === l.cle;
+          return (
+            <li key={l.cle} className={`carte decision ${d ? `decide-${d.statut}` : ""}`}>
+              <div className="decision-tete">
+                <span className="fait-champ">{l.libelle}</span>
+                {d && (
+                  <span className={`etat-decision etat-${d.statut}`}>
+                    {d.statut === "accepte" ? <><IconeCoche /> Accepté</> : "Corrigé"}
+                  </span>
+                )}
+              </div>
+              <p className="decision-valeur">
+                {d?.statut === "corrige" ? (
+                  <><s>{affiche(l.cle, l.propose)}</s> <span aria-hidden>→</span> <strong>{affiche(l.cle, d.valeur)}</strong></>
+                ) : (
+                  <strong>{affiche(l.cle, l.propose)}</strong>
+                )}
+              </p>
+              {l.source && <p className="fait-source">« {l.source} »</p>}
+
+              {enCours && l.cle === "urgence" && (
+                <div className="choix-urgence" role="group" aria-label="Niveau d'urgence corrigé">
+                  {(["urgent", "normal", "faible"] as NiveauUrgence[]).map((n) => (
+                    <button
+                      key={n}
+                      className={`pill pill-${n} ${n === l.propose ? "pill-propose" : ""}`}
+                      onClick={() => {
+                        decider(l.cle, n === l.propose ? { statut: "accepte", valeur: n } : { statut: "corrige", valeur: n });
                         setEnEdition(null);
                       }}
                     >
-                      {l.cle === "urgence" ? (
-                        <select value={brouillon} onChange={(e) => setBrouillon(e.target.value)} autoFocus>
-                          <option value="urgent">urgent</option>
-                          <option value="normal">normal</option>
-                          <option value="faible">faible</option>
-                        </select>
-                      ) : (
-                        <input value={brouillon} onChange={(e) => setBrouillon(e.target.value)} autoFocus aria-label={`Valeur corrigée : ${l.libelle}`} />
-                      )}
-                      <button type="submit" className="btn">Enregistrer</button>
-                      <button type="button" className="btn-lien" onClick={() => setEnEdition(null)}>Annuler</button>
-                    </form>
-                  ) : (
-                    <>
-                      <button
-                        className={`btn ${d?.statut === "accepte" ? "btn-plein" : ""}`}
-                        onClick={() => setDecisions((x) => ({ ...x, [l.cle]: { statut: "accepte", valeur: l.propose } }))}
-                      >
-                        Accepter
-                      </button>
-                      <button
-                        className={`btn ${d?.statut === "corrige" ? "btn-plein" : ""}`}
-                        onClick={() => {
-                          setEnEdition(l.cle);
-                          setBrouillon(d?.valeur ?? l.propose);
-                        }}
-                      >
-                        Corriger
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <div className="pied-validation">
-        <span>{restantes === 0 ? "Toutes les propositions ont été traitées." : `${restantes} proposition(s) à traiter.`}</span>
-        <button className="btn btn-principal" disabled={restantes > 0} onClick={valider}>
-          Valider le dossier
+                      {LIBELLE_URGENCE[n]}
+                    </button>
+                  ))}
+                  <button className="btn-lien" onClick={() => setEnEdition(null)}>Annuler</button>
+                </div>
+              )}
+
+              {enCours && l.cle !== "urgence" && (
+                <form
+                  className="edition"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const v = brouillon.trim();
+                    if (!v) return;
+                    decider(l.cle, v === l.propose ? { statut: "accepte", valeur: v } : { statut: "corrige", valeur: v });
+                    setEnEdition(null);
+                  }}
+                >
+                  <label className="petit" htmlFor={`edit-${l.cle}`}>Valeur corrigée</label>
+                  <input id={`edit-${l.cle}`} value={brouillon} onChange={(e) => setBrouillon(e.target.value)} autoFocus />
+                  <div className="boutons">
+                    <button type="button" className="pill" onClick={() => setEnEdition(null)}>Annuler</button>
+                    <button type="submit" className="pill pill-sombre">Enregistrer</button>
+                  </div>
+                </form>
+              )}
+
+              {!enCours && (
+                <div className="boutons">
+                  <button
+                    className={`pill ${d?.statut === "accepte" ? "pill-ok" : ""}`}
+                    aria-pressed={d?.statut === "accepte"}
+                    onClick={() => decider(l.cle, { statut: "accepte", valeur: l.propose })}
+                  >
+                    Accepter
+                  </button>
+                  <button
+                    className={`pill ${d?.statut === "corrige" ? "pill-corrige" : ""}`}
+                    aria-pressed={d?.statut === "corrige"}
+                    onClick={() => {
+                      setEnEdition(l.cle);
+                      setBrouillon(d?.valeur ?? l.propose);
+                    }}
+                  >
+                    Corriger
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="barre-validation">
+        <button className="pill" onClick={toutAccepter} disabled={restantes === 0}>Accepter le reste</button>
+        <button className="pill pill-sombre pill-large" disabled={restantes > 0} onClick={valider}>
+          {restantes > 0 ? <><strong>{restantes}</strong>&nbsp;à traiter</> : "Valider le dossier"}
         </button>
       </div>
-    </article>
+    </div>
   );
 }
 
-function Synthese({ resultat }: { resultat: ResultatAnalyse }) {
-  const { analyse } = resultat;
+function BoutonCopier({ texte, libelle, surCopie }: { texte: string; libelle: string; surCopie?: () => void }) {
   const [copie, setCopie] = useState(false);
-  const copier = async () => {
-    try {
-      await navigator.clipboard.writeText(analyse.questions_suggerees.map((q) => `- ${q}`).join("\n"));
-      setCopie(true);
-      setTimeout(() => setCopie(false), 2000);
-    } catch {
-      /* presse-papiers indisponible */
-    }
-  };
   return (
-    <div className="deux-colonnes">
-      <article className="carte">
-        <h2>Informations manquantes</h2>
+    <button
+      className="pill"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(texte);
+          setCopie(true);
+          surCopie?.();
+          setTimeout(() => setCopie(false), 2000);
+        } catch {
+          /* presse-papiers indisponible */
+        }
+      }}
+    >
+      {copie ? <><IconeCoche /> Copié</> : libelle}
+    </button>
+  );
+}
+
+function Synthese({
+  declaration,
+  resultat,
+  dossierSuivant,
+}: {
+  declaration: Declaration;
+  resultat: ResultatAnalyse;
+  dossierSuivant: { id: string; ouvrir: () => void } | null;
+}) {
+  const { analyse } = resultat;
+  const initial = useMemo(() => brouillonMailRebond(declaration, analyse, PRENOM_GESTIONNAIRE), [declaration, analyse]);
+  const [corps, setCorps] = useState(initial.corps);
+  const [mailCopie, setMailCopie] = useState(false);
+  const [envoi, setEnvoi] = useState<MailEnvoye | undefined>(() => journal.mails().find((m) => m.dossier === declaration.id));
+
+  return (
+    <div className="synthese">
+      <section className="carte">
+        <div className="carte-tete">
+          <h2>Informations manquantes</h2>
+          <span className="compteur">{analyse.informations_manquantes.length}</span>
+        </div>
         {analyse.informations_manquantes.length === 0 ? (
           <p className="vide">Aucune information manquante détectée.</p>
         ) : (
-          <ul className="puces">{analyse.informations_manquantes.map((i) => <li key={i}>{i}</li>)}</ul>
+          <div className="signaux">
+            {analyse.informations_manquantes.map((i) => <span key={i} className="signal">{i}</span>)}
+          </div>
         )}
         {analyse.alertes.length > 0 && (
-          <>
+          <div className="alertes" role="note">
             <h3>Alertes</h3>
-            <ul className="alertes">{analyse.alertes.map((a) => <li key={a}>{a}</li>)}</ul>
-          </>
+            {analyse.alertes.map((a) => <p key={a}>{a}</p>)}
+          </div>
         )}
-      </article>
-      <article className="carte">
+      </section>
+
+      <section className="carte">
         <div className="carte-tete">
-          <h2>Questions à poser au déclarant</h2>
+          <h2>Questions à poser</h2>
           {analyse.questions_suggerees.length > 0 && (
-            <button className="btn" onClick={copier}>{copie ? "Copié" : "Copier"}</button>
+            <BoutonCopier texte={analyse.questions_suggerees.map((q) => `- ${q}`).join("\n")} libelle="Copier les questions" />
           )}
         </div>
         {analyse.questions_suggerees.length === 0 ? (
           <p className="vide">Aucune question suggérée.</p>
         ) : (
-          <ol className="questions">{analyse.questions_suggerees.map((q) => <li key={q}>{q}</li>)}</ol>
+          <ul className="bulles">
+            {analyse.questions_suggerees.map((q) => (
+              <li key={q} className="bulle">{q}</li>
+            ))}
+          </ul>
         )}
-        <p className="aide">Suggestions à reformuler librement. La décision sur le dossier reste celle du gestionnaire.</p>
-      </article>
+      </section>
+
+      <section className="carte mail-rebond" aria-label="Brouillon de mail au déclarant">
+        <div className="carte-tete">
+          <h2>Mail de rebond au déclarant</h2>
+          <span className="etat-brouillon">Brouillon</span>
+        </div>
+        <p className="mail-ligne"><span className="petit">À</span> <strong>{declaration.declarant}</strong></p>
+        <p className="mail-ligne"><span className="petit">Objet</span> <strong>{initial.objet}</strong></p>
+        <label className="petit" htmlFor="mail-corps">Message, modifiable avant envoi</label>
+        <textarea id="mail-corps" className="mail-corps" value={corps} onChange={(e) => setCorps(e.target.value)} rows={Math.max(12, corps.split("\n").length + 4)} />
+        {envoi ? (
+          <div className="mail-envoye" role="status">
+            <span className="insecable"><IconeCoche /> Mail envoyé le <strong>{formaterHorodatage(envoi.envoye_le)}</strong></span>
+            <button
+              className="btn-lien"
+              onClick={() => {
+                journal.annulerMailEnvoye(declaration.id);
+                setEnvoi(undefined);
+              }}
+            >
+              Annuler
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="boutons">
+              <BoutonCopier texte={`Objet : ${initial.objet}\n\n${corps}`} libelle="Copier le mail" surCopie={() => setMailCopie(true)} />
+              {mailCopie && (
+                <button className="pill pill-ok" onClick={() => setEnvoi(journal.marquerMailEnvoye(declaration.id))}>
+                  <IconeCoche /> J'ai envoyé le mail
+                </button>
+              )}
+              {corps !== initial.corps && (
+                <button className="btn-lien" onClick={() => setCorps(initial.corps)}>Revenir au brouillon proposé</button>
+              )}
+            </div>
+            {mailCopie && (
+              <p className="aide" aria-live="polite">Mail copié. Collez-le dans votre messagerie, envoyez-le, puis confirmez l'envoi ici.</p>
+            )}
+          </>
+        )}
+        <p className="aide">Rien n'est envoyé depuis la démo. Le mail ne contient aucune décision de garantie : relisez-le avant de l'envoyer depuis votre messagerie.</p>
+      </section>
+
+      <div className="suite">
+        {dossierSuivant ? (
+          <button className="pill pill-sombre pill-large" onClick={dossierSuivant.ouvrir}>
+            Dossier suivant : <strong>&nbsp;{dossierSuivant.id}</strong>
+          </button>
+        ) : (
+          <p className="info">Tous les dossiers sont validés. Bravo, la file du jour est vide.</p>
+        )}
+      </div>
     </div>
   );
 }

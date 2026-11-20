@@ -77,15 +77,15 @@ const REGLES: Record<Champ, Regle[]> = {
 };
 
 const QUESTIONS: Record<Champ, string> = {
-  date_sinistre: "À quelle date et vers quelle heure avez-vous constaté le dégât des eaux ?",
-  lieu: "Dans quelle(s) pièce(s) du logement les dégâts se trouvent-ils ?",
-  cause_apparente: "Savez-vous d'où vient l'eau (canalisation, appareil, voisin, toiture) ?",
-  etendue_degats: "Pouvez-vous décrire les dégâts visibles (murs, sols, plafonds, mobilier) ?",
-  personnes_en_danger: "Une personne a-t-elle été blessée ou est-elle en danger ?",
+  date_sinistre: "À quelle date et vers quelle heure avez-vous constaté le dégât ?",
+  lieu: "Dans quelles pièces du logement se trouvent les dégâts ?",
+  cause_apparente: "Savez-vous d'où provient l'eau : canalisation, appareil, toiture ou logement voisin ?",
+  etendue_degats: "Pouvez-vous décrire les dégâts visibles sur les murs, sols, plafonds ou meubles ?",
+  personnes_en_danger: "Quelqu'un a-t-il été blessé ou est-il en danger ?",
   coupure_eau: "Avez-vous pu couper l'arrivée d'eau ?",
-  electricite_touchee: "L'eau a-t-elle atteint des prises, des luminaires ou le tableau électrique ?",
-  tiers_implique: "Un voisin ou la copropriété est-il concerné ?",
-  photos_mentionnees: "Pouvez-vous nous transmettre des photos des dégâts ?",
+  electricite_touchee: "L'eau a-t-elle touché des prises, des luminaires ou le tableau électrique ?",
+  tiers_implique: "Le dégât touche-t-il aussi un logement voisin ou les parties communes ?",
+  photos_mentionnees: "Pouvez-vous nous envoyer quelques photos des dégâts ?",
 };
 
 const INJECTION =
