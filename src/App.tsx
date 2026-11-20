@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DECLARATIONS, type Declaration } from "./data/declarations";
 import { analyser } from "./lib/analyser";
 import { journal, type Correction, type DossierValide, type MailEnvoye } from "./lib/journal";
@@ -56,6 +56,7 @@ export default function App() {
   const [guide, setGuide] = useState(false);
   const [dernierDossier, setDernierDossier] = useState<string | null>(null);
   const [valides, setValides] = useState(() => journal.valides());
+  const [mails, setMails] = useState<MailEnvoye[]>(() => journal.mails());
 
   useEffect(() => {
     let annule = false;
@@ -85,6 +86,17 @@ export default function App() {
     window.scrollTo({ top: 0 });
     if (vue.ecran === "dossier") setDernierDossier(vue.id);
   }, [vue]);
+
+  // Accessibilité : au changement d'écran (pas d'onglet), le focus va au titre pour que le lecteur d'écran l'annonce.
+  const cleEcran = vue.ecran === "dossier" ? `dossier-${vue.id}` : vue.ecran;
+  const premierRendu = useRef(true);
+  useEffect(() => {
+    if (premierRendu.current) {
+      premierRendu.current = false;
+      return;
+    }
+    document.querySelector<HTMLElement>("#contenu h1")?.focus({ preventScroll: true });
+  }, [cleEcran]);
 
   const declaration = vue.ecran === "dossier" ? DECLARATIONS.find((d) => d.id === vue.id) : undefined;
 
@@ -133,6 +145,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <a className="evitement" href="#contenu">Aller au contenu</a>
       <Navigation
         vue={vue}
         idCourant={idCourant}
@@ -161,7 +174,7 @@ export default function App() {
           )}
         </header>
 
-        <main className="contenu" id="contenu">
+        <main className="contenu" id="contenu" tabIndex={-1}>
           {vue.ecran === "accueil" && (
             <Accueil analyses={analyses} valides={valides.map((v) => v.dossier)} ouvrirBoite={allerBoite} demarrerGuide={demarrerGuide} />
           )}
@@ -169,6 +182,7 @@ export default function App() {
             <BoiteReception
               analyses={analyses}
               validations={valides}
+              mails={mails}
               ouvrir={(id) => {
                 setGuide(false);
                 setVue({ ecran: "dossier", id, onglet: "detail" });
@@ -192,9 +206,25 @@ export default function App() {
                 return id ? { id, ouvrir: () => { setGuide(false); setVue({ ecran: "dossier", id, onglet: "detail" }); } } : null;
               })()}
               surValidation={() => setValides(journal.valides())}
+              envoi={mails.find((m) => m.dossier === declaration.id)}
+              marquerEnvoi={(oui) => {
+                if (oui) journal.marquerMailEnvoye(declaration.id);
+                else journal.annulerMailEnvoye(declaration.id);
+                setMails(journal.mails());
+              }}
             />
           )}
-          {vue.ecran === "journal" && <Journal surReinitialisation={() => setValides([])} />}
+          {vue.ecran === "journal" && (
+            <Journal
+              valides={valides}
+              mails={mails}
+              ouvrirDossier={(id) => setVue({ ecran: "dossier", id, onglet: "synthese" })}
+              surReinitialisation={() => {
+                setValides([]);
+                setMails([]);
+              }}
+            />
+          )}
         </main>
 
         <footer className="pied">
@@ -240,9 +270,9 @@ const ICONES = {
 function LogoSinistra() {
   return (
     <span className="logo" aria-hidden>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 3.5c-3.6 4.4-6 7.6-6 10.6a6 6 0 0 0 12 0c0-3-2.4-6.2-6-10.6z" />
-        <path d="M9.2 14.5a2.8 2.8 0 0 0 2.8 2.7" />
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2.8 4.5 5.6v5.6c0 4.7 3.1 8.6 7.5 10 4.4-1.4 7.5-5.3 7.5-10V5.6z" />
+        <path d="M12 8.2c-1.9 2.3-3 3.9-3 5.4a3 3 0 0 0 6 0c0-1.5-1.1-3.1-3-5.4z" fill="currentColor" stroke="none" />
       </svg>
     </span>
   );
@@ -356,7 +386,7 @@ function Accueil({
             {METEO_DEMO.ciel}, {METEO_DEMO.temperature} °C
           </span>
         </p>
-        <h1>{salut} {PRENOM_GESTIONNAIRE}, voici votre file du jour</h1>
+        <h1 tabIndex={-1}>{salut} {PRENOM_GESTIONNAIRE}, voici votre file du jour</h1>
         <p className="sous-titre">
           Sinistra a lu les déclarations de dégât des eaux reçues. Il a relevé les faits, repéré les cas à traiter en priorité et préparé les questions à poser.
           Vous validez ou corrigez tout.
@@ -438,8 +468,8 @@ const ETAPES_GUIDE: Record<Onglet, { num: number; titre: string; texte: string; 
   },
   synthese: {
     num: 3,
-    titre: "Préparez votre rappel",
-    texte: "Retrouvez les informations manquantes et les questions à poser au déclarant.",
+    titre: "Relancez le déclarant",
+    texte: "Relisez le mail de rebond, copiez-le dans votre messagerie, puis confirmez son envoi : il apparaîtra dans la boîte et le journal.",
   },
 };
 
@@ -532,10 +562,12 @@ function BarresProgression({
 function BoiteReception({
   analyses,
   validations,
+  mails,
   ouvrir,
 }: {
   analyses: Record<string, EtatAnalyse>;
   validations: DossierValide[];
+  mails: MailEnvoye[];
   ouvrir: (id: string) => void;
 }) {
   const [filtre, setFiltre] = useState<Filtre>("toutes");
@@ -579,7 +611,7 @@ function BoiteReception({
     <div className="boite">
       <section className="boite-tete">
         <p className="etape">Tri des déclarations dégât des eaux</p>
-        <h1>Boîte de réception</h1>
+        <h1 tabIndex={-1}>Boîte de réception</h1>
         <div className="chips">
           <span className="chip"><span className="chip-cle">Reçues</span> {DECLARATIONS.length}</span>
           <span className="chip"><span className="chip-cle">Urgentes</span> {parNiveau("urgent")}</span>
@@ -611,7 +643,7 @@ function BoiteReception({
                   <button
                     className={`declaration ${classe}`}
                     onClick={() => ouvrir(d.id)}
-                    aria-label={`Ouvrir ${d.id}${validation ? ", dossier validé" : ", à valider"}`}
+                    aria-label={`Ouvrir ${d.id}${validation ? `, dossier validé, ${mails.some((m) => m.dossier === d.id) ? "mail envoyé" : "mail à envoyer"}` : ", à valider"}`}
                   >
                     {validation && (
                       <span className="bandeau-valide">
@@ -621,6 +653,12 @@ function BoiteReception({
                     <span className="declaration-haut">
                       {n ? <BadgeUrgence niveau={n} /> : <span className="badge badge-attente">Analyse…</span>}
                       {!validation && <span className="statut">À valider</span>}
+                      {validation &&
+                        (mails.some((m) => m.dossier === d.id) ? (
+                          <span className="statut statut-ok">Mail envoyé</span>
+                        ) : (
+                          <span className="statut statut-attente">Mail à envoyer</span>
+                        ))}
                       <span className="rond-fleche" aria-hidden>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 16 16 8M9.5 8H16v6.5" /></svg>
                       </span>
@@ -684,6 +722,8 @@ function Dossier({
   validation,
   surValidation,
   dossierSuivant,
+  envoi,
+  marquerEnvoi,
 }: {
   declaration: Declaration;
   etat: EtatAnalyse | undefined;
@@ -696,6 +736,8 @@ function Dossier({
   validation?: DossierValide;
   surValidation: () => void;
   dossierSuivant: { id: string; ouvrir: () => void } | null;
+  envoi?: MailEnvoye;
+  marquerEnvoi: (oui: boolean) => void;
 }) {
   const onglets: { id: Onglet; libelle: string; etape: number }[] = [
     { id: "detail", libelle: "Détail", etape: 1 },
@@ -713,7 +755,7 @@ function Dossier({
           <p className="etape">
             {declaration.canal} · <Envoi declaration={declaration} />
           </p>
-          <h1>
+          <h1 tabIndex={-1}>
             {declaration.id}
           </h1>
           <div className="chips chips-dossier">
@@ -766,7 +808,17 @@ function Dossier({
               }}
             />
           )}
-          {onglet === "synthese" && <Synthese declaration={declaration} resultat={etat} dossierSuivant={dossierSuivant} />}
+          {onglet === "synthese" && (
+            <Synthese
+              declaration={declaration}
+              resultat={etat}
+              dossierSuivant={dossierSuivant}
+              estValide={estValide}
+              allerValidation={() => changerOnglet("validation")}
+              envoi={envoi}
+              marquerEnvoi={marquerEnvoi}
+            />
+          )}
         </>
       )}
     </section>
@@ -1110,16 +1162,23 @@ function Synthese({
   declaration,
   resultat,
   dossierSuivant,
+  estValide,
+  allerValidation,
+  envoi,
+  marquerEnvoi,
 }: {
   declaration: Declaration;
   resultat: ResultatAnalyse;
   dossierSuivant: { id: string; ouvrir: () => void } | null;
+  estValide: boolean;
+  allerValidation: () => void;
+  envoi?: MailEnvoye;
+  marquerEnvoi: (oui: boolean) => void;
 }) {
   const { analyse } = resultat;
   const initial = useMemo(() => brouillonMailRebond(declaration, analyse, PRENOM_GESTIONNAIRE), [declaration, analyse]);
   const [corps, setCorps] = useState(initial.corps);
   const [mailCopie, setMailCopie] = useState(false);
-  const [envoi, setEnvoi] = useState<MailEnvoye | undefined>(() => journal.mails().find((m) => m.dossier === declaration.id));
 
   return (
     <div className="synthese">
@@ -1164,7 +1223,7 @@ function Synthese({
       <section className="carte mail-rebond" aria-label="Brouillon de mail au déclarant">
         <div className="carte-tete">
           <h2>Mail de rebond au déclarant</h2>
-          <span className="etat-brouillon">Brouillon</span>
+          <span className={`etat-brouillon ${envoi ? "etat-envoye" : ""}`}>{envoi ? "Envoyé" : "Brouillon"}</span>
         </div>
         <p className="mail-ligne"><span className="petit">À</span> <strong>{declaration.declarant}</strong></p>
         <p className="mail-ligne"><span className="petit">Objet</span> <strong>{initial.objet}</strong></p>
@@ -1175,10 +1234,7 @@ function Synthese({
             <span className="insecable"><IconeCoche /> Mail envoyé le <strong>{formaterHorodatage(envoi.envoye_le)}</strong></span>
             <button
               className="btn-lien"
-              onClick={() => {
-                journal.annulerMailEnvoye(declaration.id);
-                setEnvoi(undefined);
-              }}
+              onClick={() => marquerEnvoi(false)}
             >
               Annuler
             </button>
@@ -1187,8 +1243,8 @@ function Synthese({
           <>
             <div className="boutons">
               <BoutonCopier texte={`Objet : ${initial.objet}\n\n${corps}`} libelle="Copier le mail" surCopie={() => setMailCopie(true)} />
-              {mailCopie && (
-                <button className="pill pill-ok" onClick={() => setEnvoi(journal.marquerMailEnvoye(declaration.id))}>
+              {mailCopie && estValide && (
+                <button className="pill pill-ok" onClick={() => marquerEnvoi(true)}>
                   <IconeCoche /> J'ai envoyé le mail
                 </button>
               )}
@@ -1196,8 +1252,14 @@ function Synthese({
                 <button className="btn-lien" onClick={() => setCorps(initial.corps)}>Revenir au brouillon proposé</button>
               )}
             </div>
-            {mailCopie && (
+            {mailCopie && estValide && (
               <p className="aide" aria-live="polite">Mail copié. Collez-le dans votre messagerie, envoyez-le, puis confirmez l'envoi ici.</p>
+            )}
+            {!estValide && (
+              <div className="a-valider" role="note">
+                <p>Validez d'abord le dossier : l'envoi du mail ne peut être enregistré que sur un dossier validé.</p>
+                <button className="pill pill-sombre" onClick={allerValidation}>Aller à la validation</button>
+              </div>
             )}
           </>
         )}
@@ -1219,9 +1281,30 @@ function Synthese({
 
 /* ---------- Journal ---------- */
 
-function Journal({ surReinitialisation }: { surReinitialisation: () => void }) {
+function libelleChamp(champ: string) {
+  return champ === "urgence" ? "Niveau d'urgence" : LIBELLES_CHAMPS[champ as Champ] ?? champ;
+}
+function afficheValeur(champ: string, v: string) {
+  return champ === "urgence" ? LIBELLE_URGENCE[v as NiveauUrgence] ?? v : v;
+}
+
+function Journal({
+  valides,
+  mails,
+  ouvrirDossier,
+  surReinitialisation,
+}: {
+  valides: DossierValide[];
+  mails: MailEnvoye[];
+  ouvrirDossier: (id: string) => void;
+  surReinitialisation: () => void;
+}) {
   const [corrections, setCorrections] = useState(() => journal.corrections());
-  const valides = journal.valides();
+  const [confirmer, setConfirmer] = useState(false);
+  const [annonce, setAnnonce] = useState("");
+  const vide = valides.length === 0 && corrections.length === 0 && mails.length === 0;
+  const tries = [...valides].sort((a, b) => b.valide_le.localeCompare(a.valide_le));
+
   const telecharger = () => {
     const blob = new Blob([journal.exporter()], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -1231,58 +1314,120 @@ function Journal({ surReinitialisation }: { surReinitialisation: () => void }) {
     a.click();
     URL.revokeObjectURL(url);
   };
+  const reinitialiser = () => {
+    journal.reinitialiser();
+    setCorrections([]);
+    setConfirmer(false);
+    surReinitialisation();
+    setAnnonce("Journal effacé. Tous les dossiers sont de nouveau à valider.");
+  };
+  const pluriel = (n: number, mot: string) => `${mot}${n > 1 ? "s" : ""}`;
+
   return (
-    <section>
+    <section className="journal">
       <div className="titre-ecran">
         <div>
-          <p className="etape">Garde-fou n°4</p>
-          <h1>Journal des corrections</h1>
-          <p className="sous-titre">
-            {valides.length} dossier(s) validé(s), {corrections.length} correction(s). Stocké dans ce navigateur pour la démo.
-          </p>
-        </div>
-        <div className="actions">
-          <button className="btn" onClick={telecharger}>Exporter en JSON</button>
-          <button
-            className="btn-lien"
-            onClick={() => {
-              journal.reinitialiser();
-              setCorrections([]);
-              surReinitialisation();
-            }}
-          >
-            Réinitialiser
-          </button>
+          <p className="etape">Garde-fou n°4 · stocké dans ce navigateur</p>
+          <h1 tabIndex={-1}>Journal</h1>
+          <div className="chips chips-dossier">
+            <span className="chip"><span className="chip-cle">Validés</span> {valides.length}</span>
+            <span className="chip"><span className="chip-cle">Corrections</span> {corrections.length}</span>
+            <span className="chip"><span className="chip-cle">Mails envoyés</span> {mails.filter((m) => valides.some((v) => v.dossier === m.dossier)).length}</span>
+          </div>
         </div>
       </div>
-      <article className="carte">
-        {corrections.length === 0 ? (
-          <p className="vide">Aucune correction pour l'instant. Validez un dossier en corrigeant au moins un champ.</p>
-        ) : (
-          <table className="table-validation">
-            <thead>
-              <tr>
-                <th>Dossier</th>
-                <th>Champ</th>
-                <th>Proposé</th>
-                <th>Corrigé</th>
-                <th>Moteur</th>
-              </tr>
-            </thead>
-            <tbody>
-              {corrections.map((c, i) => (
-                <tr key={i}>
-                  <td><strong className="num-dossier">{c.dossier}</strong></td>
-                  <td>{c.champ === "urgence" ? "Niveau d'urgence" : LIBELLES_CHAMPS[c.champ as Champ] ?? c.champ}</td>
-                  <td><s>{c.valeur_proposee}</s></td>
-                  <td><strong>{c.valeur_corrigee}</strong></td>
-                  <td>{c.moteur === "ia" ? "IA" : "Règles"}</td>
-                </tr>
+
+      <p className="sr-only" role="status" aria-live="polite">{annonce}</p>
+      {annonce && <p className="info">{annonce}</p>}
+
+      <div className="journal-grille">
+        <section className="carte">
+          <div className="carte-tete">
+            <h2>Dossiers validés</h2>
+            <span className="compteur">{valides.length}</span>
+          </div>
+          {tries.length === 0 ? (
+            <p className="vide">Aucun dossier validé pour l'instant.</p>
+          ) : (
+            <ul className="liste journal-liste">
+              {tries.map((v) => {
+                const d = DECLARATIONS.find((x) => x.id === v.dossier);
+                const mail = mails.find((m) => m.dossier === v.dossier);
+                return (
+                  <li key={v.dossier}>
+                    <button className="journal-ligne" onClick={() => ouvrirDossier(v.dossier)} aria-label={`Ouvrir ${v.dossier}`}>
+                      <span className="journal-ligne-haut">
+                        <strong className="num-dossier">{v.dossier}</strong>
+                        <BadgeUrgence niveau={v.urgence as NiveauUrgence} />
+                      </span>
+                      {d && <span className="petit"><strong>{d.declarant}</strong> · {d.ville}</span>}
+                      <span className="petit">
+                        Validé le <strong>{formaterHorodatage(v.valide_le)}</strong> · <strong>{v.nb_corrections}</strong> {pluriel(v.nb_corrections, "correction")}
+                      </span>
+                      {mail ? (
+                        <span className="statut statut-ok">Mail envoyé le {formaterHorodatage(mail.envoye_le)}</span>
+                      ) : (
+                        <span className="statut statut-attente">Mail à envoyer</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        <section className="carte">
+          <div className="carte-tete">
+            <h2>Corrections du gestionnaire</h2>
+            <span className="compteur">{corrections.length}</span>
+          </div>
+          <p className="aide">Chaque correction (valeur proposée, valeur retenue) sert à évaluer et améliorer Sinistra.</p>
+          {corrections.length === 0 ? (
+            <p className="vide">Aucune correction pour l'instant. Validez un dossier en corrigeant au moins un champ.</p>
+          ) : (
+            <ul className="liste journal-liste">
+              {[...corrections].reverse().map((c, i) => (
+                <li key={i} className="correction">
+                  <span className="journal-ligne-haut">
+                    <span className="fait-champ">{libelleChamp(c.champ)}</span>
+                    <span className="petit">{c.moteur === "ia" ? "Proposé par l'IA" : "Proposé par les règles"}</span>
+                  </span>
+                  <p className="decision-valeur">
+                    <s>{afficheValeur(c.champ, c.valeur_proposee)}</s> <span aria-hidden>→</span>
+                    <span className="sr-only">corrigé en</span> <strong>{afficheValeur(c.champ, c.valeur_corrigee)}</strong>
+                  </p>
+                  <span className="petit"><strong className="num-dossier">{c.dossier}</strong> · {formaterHorodatage(c.horodatage)}</span>
+                </li>
               ))}
-            </tbody>
-          </table>
+            </ul>
+          )}
+        </section>
+      </div>
+
+      <section className="carte journal-actions">
+        <h2>Données de la démo</h2>
+        <div className="boutons">
+          <button className="pill" onClick={telecharger} disabled={vide}>Exporter en JSON</button>
+          {!confirmer && (
+            <button className="pill pill-danger" onClick={() => setConfirmer(true)} disabled={vide}>Réinitialiser le journal</button>
+          )}
+        </div>
+        {confirmer && (
+          <div className="confirmation" role="alertdialog" aria-labelledby="confirm-titre" aria-describedby="confirm-texte">
+            <strong id="confirm-titre">Effacer tout le journal ?</strong>
+            <p id="confirm-texte">
+              Seront effacés : <strong>{valides.length}</strong> {pluriel(valides.length, "dossier")} {pluriel(valides.length, "validé")},{" "}
+              <strong>{corrections.length}</strong> {pluriel(corrections.length, "correction")} et <strong>{mails.length}</strong>{" "}
+              {pluriel(mails.length, "confirmation")} d'envoi. Cette action est définitive : exportez d'abord le journal si vous voulez le garder.
+            </p>
+            <div className="boutons">
+              <button className="pill" onClick={() => setConfirmer(false)} autoFocus>Annuler</button>
+              <button className="pill pill-danger-plein" onClick={reinitialiser}>Oui, tout effacer</button>
+            </div>
+          </div>
         )}
-      </article>
+      </section>
     </section>
   );
 }

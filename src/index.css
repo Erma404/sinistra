@@ -95,6 +95,22 @@ h2 { font-size: 1.15rem; font-weight: 500; margin-bottom: 0.9rem; }
 h3 { font-size: 1rem; font-weight: 500; margin: 1.2rem 0 0.4rem; }
 s { color: var(--texte-doux); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+h1:focus, main:focus { outline: none; }
+
+/* Accessibilité : lien d'évitement et texte réservé aux lecteurs d'écran */
+.evitement {
+  position: fixed; top: 10px; left: 10px; z-index: 1000; transform: translateY(-160%);
+  background: var(--sombre); color: var(--sur-sombre); padding: 0.6rem 1rem; border-radius: 999px;
+  font-weight: 600; text-decoration: none;
+}
+.evitement:focus { transform: none; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
 
 .app { min-height: 100vh; }
 .colonne {
@@ -605,16 +621,6 @@ mark.mot { background: var(--sombre); color: var(--sur-sombre); font-weight: 700
   .suite .pill-large { width: auto; }
 }
 
-/* Journal (style minimal en attendant sa refonte) */
-.table-validation { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
-.table-validation th { text-align: left; font-size: 0.78rem; font-weight: 500; color: var(--texte-doux); padding: 0.6rem 0.5rem; border-bottom: 1px solid var(--bordure); }
-.table-validation td { padding: 0.8rem 0.5rem; border-bottom: 1px solid var(--bordure); vertical-align: top; }
-@media (max-width: 700px) {
-  .table-validation thead { display: none; }
-  .table-validation tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--bordure); }
-  .table-validation td { display: block; border: 0; padding: 0.15rem 0; }
-}
-
 /* Confirmation d'envoi du mail */
 .mail-envoye {
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 1rem;
@@ -622,3 +628,38 @@ mark.mot { background: var(--sombre); color: var(--sur-sombre); font-weight: 700
 }
 .mail-envoye .insecable { display: inline-flex; align-items: center; gap: 0.4rem; }
 .mail-envoye strong { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Statut du mail dans la boîte et le journal */
+.statut-attente { color: var(--attention); background: var(--attention-fond); }
+.statut-attente::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.etat-envoye { background: var(--ok-fond); color: var(--ok); }
+
+/* Synthèse d'un dossier pas encore validé */
+.a-valider {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.6rem 1rem;
+  padding: 0.75rem 1rem; border-radius: var(--rayon-moyen); background: var(--surface-douce);
+}
+.a-valider p { margin: 0; flex: 1 1 240px; font-size: 0.92rem; }
+
+/* Journal */
+.journal-grille { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); margin-bottom: 16px; }
+.journal-grille > * { min-width: 0; }
+@media (min-width: 1100px) { .journal-grille { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 20px; } }
+.journal-liste { display: grid; gap: 10px; margin-top: 4px; }
+.journal-ligne, .correction {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; width: 100%; text-align: left;
+  padding: 0.85rem 1rem; border-radius: var(--rayon-moyen); background: var(--surface-douce); border: 1px solid transparent;
+}
+.journal-ligne { transition: border-color 0.15s; }
+.journal-ligne:hover { border-color: var(--accent); }
+.journal-ligne-haut { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; width: 100%; flex-wrap: wrap; }
+.journal-ligne .petit strong, .correction .petit strong { color: var(--texte); font-weight: 700; }
+.journal-actions h2 { margin-bottom: 0.6rem; }
+.pill-danger { color: var(--alerte); }
+.pill-danger-plein { background: var(--alerte); color: var(--surface); border-color: var(--alerte); font-weight: 600; }
+.confirmation {
+  margin-top: 14px; padding: 1rem; border-radius: var(--rayon-moyen);
+  background: var(--alerte-fond); color: var(--texte); box-shadow: inset 4px 0 0 var(--alerte);
+}
+.confirmation > strong { color: var(--alerte); }
+.confirmation p { margin: 0.4rem 0 0.8rem; font-size: 0.92rem; }
