@@ -663,3 +663,21 @@ mark.mot { background: var(--sombre); color: var(--sur-sombre); font-weight: 700
 }
 .confirmation > strong { color: var(--alerte); }
 .confirmation p { margin: 0.4rem 0 0.8rem; font-size: 0.92rem; }
+
+/* Téléphone en paysage : la barre du bas devient un rail vertical à gauche,
+   pour laisser la hauteur au contenu et à la barre de validation. */
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 959px) {
+  .app { display: grid; grid-template-columns: calc(80px + env(safe-area-inset-left, 0px)) minmax(0, 1fr); }
+  .colonne { padding-bottom: 0; }
+  .nav {
+    position: sticky; top: 0; left: auto; right: auto; bottom: auto; height: 100vh; height: 100dvh;
+    max-width: none; margin: 0; border-radius: 0; border: 0; border-right: 1px solid var(--bordure);
+    padding: 8px 6px 8px calc(6px + env(safe-area-inset-left, 0px));
+    background: var(--surface); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .nav-liste { flex-direction: column; justify-content: center; gap: 2px; }
+  .nav-item { min-width: 0; width: 100%; min-height: 50px; }
+  .nav-icone { height: 32px; }
+  .barre-validation { bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+}

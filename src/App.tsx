@@ -111,12 +111,11 @@ export default function App() {
       return !!e && e !== "chargement" && e.analyse.urgence.niveau === "urgent";
     };
     const dejaValide = (id: string) => valides.some((v) => v.dossier === id);
-    const urgent =
-      DECLARATIONS.find((d) => estUrgent(d.id) && !dejaValide(d.id)) ??
-      DECLARATIONS.find((d) => !dejaValide(d.id)) ??
-      DECLARATIONS.find((d) => estUrgent(d.id));
+    // Uniquement un cas urgent pas encore validé ; sans cas urgent restant, le bouton n'est pas proposé.
+    const urgent = DECLARATIONS.find((d) => estUrgent(d.id) && !dejaValide(d.id));
+    if (!urgent) return;
     setGuide(true);
-    setVue({ ecran: "dossier", id: (urgent ?? DECLARATIONS[0]).id, onglet: "detail" });
+    setVue({ ecran: "dossier", id: urgent.id, onglet: "detail" });
   };
 
   /** Prochain dossier à traiter : non validé, par urgence puis heure d'envoi. */
@@ -364,8 +363,11 @@ function Accueil({
 }) {
   const prets = DECLARATIONS.map((d) => analyses[d.id]).filter((a): a is ResultatAnalyse => !!a && a !== "chargement");
   const enCours = prets.length < DECLARATIONS.length;
-  const urgents = prets.filter((a) => a.analyse.urgence.niveau === "urgent").length;
   const aValider = DECLARATIONS.filter((d) => !valides.includes(d.id)).length;
+  const urgentsATraiter = DECLARATIONS.filter((d) => {
+    const a = analyses[d.id];
+    return !!a && a !== "chargement" && a.analyse.urgence.niveau === "urgent" && !valides.includes(d.id);
+  }).length;
   const heure = new Date().getHours();
   const salut = heure < 18 ? "Bonjour" : "Bonsoir";
   const jour = new Date("2026-11-18T08:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
@@ -401,8 +403,8 @@ function Accueil({
             <span className="compteur-libelle">déclarations reçues</span>
           </div>
           <div>
-            <span className="compteur-valeur compteur-urgent">{enCours ? "…" : urgents}</span>
-            <span className="compteur-libelle">proposées en urgent</span>
+            <span className={`compteur-valeur ${urgentsATraiter > 0 ? "compteur-urgent" : ""}`}>{enCours ? "…" : urgentsATraiter}</span>
+            <span className="compteur-libelle">{urgentsATraiter > 1 ? "urgents à traiter" : "urgent à traiter"}</span>
           </div>
           <div>
             <span className="compteur-valeur">{aValider}</span>
@@ -410,14 +412,28 @@ function Accueil({
           </div>
         </div>
         <div className="cta">
-          <button className="btn btn-principal" onClick={demarrerGuide} disabled={enCours}>
-            {enCours ? "Analyse en cours…" : "Commencer par le cas urgent"}
-          </button>
-          <button className="btn btn-secondaire" onClick={ouvrirBoite}>
+          {enCours ? (
+            <button className="btn btn-principal" disabled>Analyse en cours…</button>
+          ) : (
+            urgentsATraiter > 0 && (
+              <button className="btn btn-principal" onClick={demarrerGuide}>
+                {urgentsATraiter > 1 ? "Commencer par les cas urgents" : "Commencer par le cas urgent"}
+              </button>
+            )
+          )}
+          <button className={`btn ${!enCours && urgentsATraiter === 0 ? "btn-principal" : "btn-secondaire"}`} onClick={ouvrirBoite}>
             Ouvrir la boîte de réception
           </button>
         </div>
-        <p className="aide">Le parcours guidé vous accompagne sur un dossier en 3 étapes, environ 2 minutes.</p>
+        {!enCours && (
+          <p className="aide" aria-live="polite">
+            {urgentsATraiter > 0
+              ? "Le parcours guidé vous accompagne sur un dossier urgent en 3 étapes, environ 2 minutes."
+              : aValider > 0
+                ? "Aucun cas urgent à traiter. Les dossiers restants vous attendent dans la boîte de réception."
+                : "Tous les dossiers du jour sont validés."}
+          </p>
+        )}
       </section>
 
       <section className="carte">
@@ -1302,6 +1318,8 @@ function Journal({
   const [corrections, setCorrections] = useState(() => journal.corrections());
   const [confirmer, setConfirmer] = useState(false);
   const [annonce, setAnnonce] = useState("");
+  // Seuls comptent les envois rattachés à un dossier validé (un envoi ne s'enregistre qu'après validation).
+  const mailsValides = mails.filter((m) => valides.some((v) => v.dossier === m.dossier));
   const vide = valides.length === 0 && corrections.length === 0 && mails.length === 0;
   const tries = [...valides].sort((a, b) => b.valide_le.localeCompare(a.valide_le));
 
@@ -1332,7 +1350,7 @@ function Journal({
           <div className="chips chips-dossier">
             <span className="chip"><span className="chip-cle">Validés</span> {valides.length}</span>
             <span className="chip"><span className="chip-cle">Corrections</span> {corrections.length}</span>
-            <span className="chip"><span className="chip-cle">Mails envoyés</span> {mails.filter((m) => valides.some((v) => v.dossier === m.dossier)).length}</span>
+            <span className="chip"><span className="chip-cle">Mails envoyés</span> {mailsValides.length}</span>
           </div>
         </div>
       </div>
@@ -1418,8 +1436,8 @@ function Journal({
             <strong id="confirm-titre">Effacer tout le journal ?</strong>
             <p id="confirm-texte">
               Seront effacés : <strong>{valides.length}</strong> {pluriel(valides.length, "dossier")} {pluriel(valides.length, "validé")},{" "}
-              <strong>{corrections.length}</strong> {pluriel(corrections.length, "correction")} et <strong>{mails.length}</strong>{" "}
-              {pluriel(mails.length, "confirmation")} d'envoi. Cette action est définitive : exportez d'abord le journal si vous voulez le garder.
+              <strong>{corrections.length}</strong> {pluriel(corrections.length, "correction")} et <strong>{mailsValides.length}</strong>{" "}
+              {pluriel(mailsValides.length, "confirmation")} d'envoi. Cette action est définitive : exportez d'abord le journal si vous voulez le garder.
             </p>
             <div className="boutons">
               <button className="pill" onClick={() => setConfirmer(false)} autoFocus>Annuler</button>
