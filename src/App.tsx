@@ -6,7 +6,7 @@ import { localiserSource } from "./shared/guardrails";
 import { LIBELLES_CHAMPS, type Champ, type Fait, type NiveauUrgence, type ResultatAnalyse } from "./shared/schema";
 
 type EtatAnalyse = ResultatAnalyse | "chargement";
-type Vue = { ecran: "boite" } | { ecran: "dossier"; id: string; onglet: Onglet } | { ecran: "journal" };
+type Vue = { ecran: "accueil" } | { ecran: "boite" } | { ecran: "dossier"; id: string; onglet: Onglet } | { ecran: "journal" };
 type Onglet = "detail" | "validation" | "synthese";
 type Decision = { statut: "accepte" | "corrige"; valeur: string };
 
@@ -19,7 +19,8 @@ function formaterDate(iso: string) {
 
 export default function App() {
   const [analyses, setAnalyses] = useState<Record<string, EtatAnalyse>>({});
-  const [vue, setVue] = useState<Vue>({ ecran: "boite" });
+  const [vue, setVue] = useState<Vue>({ ecran: "accueil" });
+  const [guide, setGuide] = useState(false);
   const [valides, setValides] = useState(() => journal.valides());
 
   useEffect(() => {
@@ -46,39 +47,71 @@ export default function App() {
     return prets.some((a) => a.moteur === "ia") ? "ia" : "regles";
   }, [analyses]);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [vue]);
+
   const declaration = vue.ecran === "dossier" ? DECLARATIONS.find((d) => d.id === vue.id) : undefined;
+
+  const allerBoite = () => {
+    setGuide(false);
+    setVue({ ecran: "boite" });
+  };
+  const demarrerGuide = () => {
+    // Cas le plus parlant : le premier dossier proposé en urgent (à défaut, le premier reçu).
+    const urgent = DECLARATIONS.find((d) => {
+      const e = analyses[d.id];
+      return e && e !== "chargement" && e.analyse.urgence.niveau === "urgent";
+    });
+    setGuide(true);
+    setVue({ ecran: "dossier", id: (urgent ?? DECLARATIONS[0]).id, onglet: "detail" });
+  };
 
   return (
     <div className="app">
-      <div className="bandeau" role="note">
-        Démo, données fictives. Aucune décision de garantie, de refus ou d'indemnisation n'est prise par l'outil.
-      </div>
       <header className="entete">
-        <button className="marque" onClick={() => setVue({ ecran: "boite" })}>
-          <span className="logo" aria-hidden>S</span>
+        <button className="marque" onClick={() => { setGuide(false); setVue({ ecran: "accueil" }); }} aria-label="Sinistra, retour à l'accueil">
+          <span className="logo" aria-hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3.5c-3.6 4.4-6 7.6-6 10.6a6 6 0 0 0 12 0c0-3-2.4-6.2-6-10.6z" />
+              <path d="M9.2 14.5a2.8 2.8 0 0 0 2.8 2.7" />
+            </svg>
+          </span>
           <span>
             <strong>Sinistra</strong>
-            <small>Assistant de tri, dégât des eaux</small>
+            <small>Tri dégât des eaux</small>
           </span>
         </button>
+        <span className="demo-pill" role="note" title="Aucune décision de garantie, de refus ou d'indemnisation n'est prise par l'outil.">
+          Démo, données fictives
+        </span>
         <div className="entete-droite">
           {moteur && (
             <span className={`moteur moteur-${moteur}`} title={moteur === "ia" ? "Analyse par le modèle Claude, via la fonction serveur" : "Aucune clé API configurée : analyse locale par règles, sans IA"}>
               {moteur === "ia" ? "Analyse IA (Claude)" : "Mode hors ligne : règles, sans IA"}
             </span>
           )}
-          <button className="btn-lien" onClick={() => setVue({ ecran: "journal" })}>
-            Journal des corrections
+          <button className="rond" onClick={() => setVue({ ecran: "journal" })} aria-label="Journal des corrections" title="Journal des corrections">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <rect x="5" y="3.5" width="14" height="17" rx="3" />
+              <path d="M9 8h6M9 12h6M9 16h3" />
+            </svg>
           </button>
         </div>
       </header>
 
       <main className="contenu">
+        {vue.ecran === "accueil" && (
+          <Accueil analyses={analyses} valides={valides.map((v) => v.dossier)} ouvrirBoite={allerBoite} demarrerGuide={demarrerGuide} />
+        )}
         {vue.ecran === "boite" && (
           <BoiteReception
             analyses={analyses}
             valides={new Set(valides.map((v) => v.dossier))}
-            ouvrir={(id) => setVue({ ecran: "dossier", id, onglet: "detail" })}
+            ouvrir={(id) => {
+              setGuide(false);
+              setVue({ ecran: "dossier", id, onglet: "detail" });
+            }}
           />
         )}
         {vue.ecran === "dossier" && declaration && (
@@ -88,7 +121,9 @@ export default function App() {
             etat={analyses[declaration.id]}
             onglet={vue.onglet}
             changerOnglet={(onglet) => setVue({ ecran: "dossier", id: declaration.id, onglet })}
-            retour={() => setVue({ ecran: "boite" })}
+            retour={allerBoite}
+            guide={guide}
+            quitterGuide={() => setGuide(false)}
             estValide={valides.some((v) => v.dossier === declaration.id)}
             surValidation={() => setValides(journal.valides())}
           />
@@ -97,9 +132,155 @@ export default function App() {
       </main>
 
       <footer className="pied">
-        Projet personnel d'Ernestine Matjabo. Cadrage, garde-fous et évaluation : Ernestine Matjabo. Code généré avec Claude Code.
+        Aucune décision de garantie, de refus ou d'indemnisation n'est prise par l'outil. Projet personnel d'Ernestine Matjabo. Cadrage, garde-fous et évaluation : Ernestine Matjabo. Code généré avec Claude Code.
       </footer>
     </div>
+  );
+}
+
+/* ---------- Accueil du gestionnaire ---------- */
+
+/** Prénom fictif du gestionnaire de la démo. */
+const PRENOM_GESTIONNAIRE = "Camille";
+
+function Accueil({
+  analyses,
+  valides,
+  ouvrirBoite,
+  demarrerGuide,
+}: {
+  analyses: Record<string, EtatAnalyse>;
+  valides: string[];
+  ouvrirBoite: () => void;
+  demarrerGuide: () => void;
+}) {
+  const prets = DECLARATIONS.map((d) => analyses[d.id]).filter((a): a is ResultatAnalyse => !!a && a !== "chargement");
+  const enCours = prets.length < DECLARATIONS.length;
+  const urgents = prets.filter((a) => a.analyse.urgence.niveau === "urgent").length;
+  const aValider = DECLARATIONS.filter((d) => !valides.includes(d.id)).length;
+  const heure = new Date().getHours();
+  const salut = heure < 18 ? "Bonjour" : "Bonsoir";
+  const jour = new Date("2026-11-18T08:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+
+  return (
+    <div className="accueil">
+      <section className="accueil-hero">
+        <p className="etape">{jour.charAt(0).toUpperCase() + jour.slice(1)} · données de démonstration</p>
+        <h1>{salut} {PRENOM_GESTIONNAIRE}, voici votre file du jour</h1>
+        <p className="sous-titre">
+          Sinistra a lu les déclarations de dégât des eaux reçues. Il a relevé les faits, repéré les cas à traiter en priorité et préparé les questions à poser.
+          Vous validez ou corrigez tout.
+        </p>
+      </section>
+
+      <section className="carte file-du-jour" aria-live="polite">
+        <h2>Votre file du jour</h2>
+        <div className="compteurs">
+          <div>
+            <span className="compteur-valeur">{DECLARATIONS.length}</span>
+            <span className="compteur-libelle">déclarations reçues</span>
+          </div>
+          <div>
+            <span className="compteur-valeur compteur-urgent">{enCours ? "…" : urgents}</span>
+            <span className="compteur-libelle">proposées en urgent</span>
+          </div>
+          <div>
+            <span className="compteur-valeur">{aValider}</span>
+            <span className="compteur-libelle">à valider</span>
+          </div>
+        </div>
+        <div className="cta">
+          <button className="btn btn-principal" onClick={demarrerGuide} disabled={enCours}>
+            {enCours ? "Analyse en cours…" : "Commencer par le cas urgent"}
+          </button>
+          <button className="btn btn-secondaire" onClick={ouvrirBoite}>
+            Ouvrir la boîte de réception
+          </button>
+        </div>
+        <p className="aide">Le parcours guidé vous accompagne sur un dossier en 3 étapes, environ 2 minutes.</p>
+      </section>
+
+      <section className="carte">
+        <h2>Comment Sinistra vous aide</h2>
+        <ol className="etapes-aide">
+          <li>
+            <span className="etape-num">1</span>
+            <div>
+              <strong>Lire plus vite</strong>
+              <p>Les faits utiles sont extraits de la déclaration, chacun avec le passage exact d'où il vient.</p>
+            </div>
+          </li>
+          <li>
+            <span className="etape-num">2</span>
+            <div>
+              <strong>Ne rater aucun cas urgent</strong>
+              <p>Un niveau d'urgence est proposé et justifié : risque électrique, personne en danger, eau qui coule encore.</p>
+            </div>
+          </li>
+          <li>
+            <span className="etape-num">3</span>
+            <div>
+              <strong>Compléter le dossier</strong>
+              <p>Les informations manquantes sont listées, avec les questions à poser au déclarant.</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+    </div>
+  );
+}
+
+/* ---------- Parcours guidé ---------- */
+
+const ETAPES_GUIDE: Record<Onglet, { num: number; titre: string; texte: string; suivant?: Onglet }> = {
+  detail: {
+    num: 1,
+    titre: "Vérifiez les faits et leurs sources",
+    texte: "Chaque fait renvoie au passage surligné de la déclaration. Repérez ce qui justifie l'urgence proposée.",
+    suivant: "validation",
+  },
+  validation: {
+    num: 2,
+    titre: "Acceptez ou corrigez chaque proposition",
+    texte: "Corrigez au moins un champ pour voir le journal des corrections, puis validez le dossier.",
+    suivant: "synthese",
+  },
+  synthese: {
+    num: 3,
+    titre: "Préparez votre rappel",
+    texte: "Retrouvez les informations manquantes et les questions à poser au déclarant.",
+  },
+};
+
+function BandeauGuide({
+  onglet,
+  changerOnglet,
+  terminer,
+  quitter,
+}: {
+  onglet: Onglet;
+  changerOnglet: (o: Onglet) => void;
+  terminer: () => void;
+  quitter: () => void;
+}) {
+  const e = ETAPES_GUIDE[onglet];
+  return (
+    <aside className="guide" aria-label="Parcours guidé">
+      <div className="guide-texte">
+        <p className="guide-etape">Parcours guidé · étape {e.num} sur 3</p>
+        <strong>{e.titre}</strong>
+        <p>{e.texte}</p>
+      </div>
+      <div className="guide-actions">
+        <button className="btn-lien" onClick={quitter}>Quitter le guide</button>
+        {e.suivant ? (
+          <button className="btn btn-principal" onClick={() => changerOnglet(e.suivant!)}>Étape suivante</button>
+        ) : (
+          <button className="btn btn-principal" onClick={terminer}>Terminer</button>
+        )}
+      </div>
+    </aside>
   );
 }
 
@@ -176,6 +357,8 @@ function Dossier({
   onglet,
   changerOnglet,
   retour,
+  guide,
+  quitterGuide,
   estValide,
   surValidation,
 }: {
@@ -184,6 +367,8 @@ function Dossier({
   onglet: Onglet;
   changerOnglet: (o: Onglet) => void;
   retour: () => void;
+  guide: boolean;
+  quitterGuide: () => void;
   estValide: boolean;
   surValidation: () => void;
 }) {
@@ -218,6 +403,8 @@ function Dossier({
           </button>
         ))}
       </nav>
+
+      {guide && <BandeauGuide onglet={onglet} changerOnglet={changerOnglet} terminer={retour} quitter={quitterGuide} />}
 
       {!etat || etat === "chargement" ? (
         <p className="chargement">Analyse de la déclaration en cours…</p>
