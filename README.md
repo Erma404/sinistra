@@ -10,6 +10,20 @@ Le gestionnaire perd du temps à lire chaque déclaration, à repérer les cas u
 
 ## Ce que fait la démo
 
+<p align="center">
+  <img src="docs/captures/mobile-accueil.png" width="180" alt="Accueil : file du jour, 2 urgents à traiter, bouton Commencer par les cas urgents">
+  <img src="docs/captures/mobile-boite.png" width="180" alt="Boîte de réception : dossier urgent DDE-2026-0141 en tête, avec les signaux Électricité touchée et Eau non coupée">
+  <img src="docs/captures/mobile-detail.png" width="180" alt="Détail : urgence proposée et justifiée, faits extraits avec leur passage source">
+  <img src="docs/captures/mobile-validation.png" width="180" alt="Validation : champs acceptés ou corrigés, lieu corrigé de cuisine en cuisine et couloir">
+  <img src="docs/captures/mobile-synthese.png" width="180" alt="Synthèse : brouillon de mail de rebond au déclarant, modifiable">
+</p>
+
+<p align="center">
+  <img src="docs/captures/desktop-dossier.png" width="760" alt="Vue ordinateur d'un dossier : au survol du fait Lieu, le mot cuisine est surligné dans la déclaration d'origine">
+</p>
+
+*Captures de la démo en mode hors ligne (analyse par règles, sans IA), données fictives.*
+
 Un **accueil** présente la file du jour (déclarations reçues, cas proposés en urgent, dossiers à valider) et propose un **parcours guidé** en 3 étapes sur le cas urgent le plus parlant.
 
 1. **Boîte de réception** : les déclarations triées par urgence proposée puis par heure d'envoi, avec le déclarant, la ville et les signaux qui expliquent le tri (électricité touchée, eau non coupée…). Chaque carte affiche son statut : *À valider*, *Mail à envoyer* ou *Mail envoyé*. Filtres et avancement du tri.
